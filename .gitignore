@@ -1,0 +1,10 @@
+*.pyc
+*/*.pyc
+*/*.c
+*.so
+*/*.so
+build/
+dist/
+genemasker.egg-info/
+.git
+.gitchangelog.rc
