@@ -78,7 +78,7 @@ def main(args=None):
 	print("Calculating rankscore stddevs on full data")
 	rankscore_stddevs = ddf[rankscore_cols_keep].std().compute()
 
-	print("Selecting random variants for use in iterative imputer training data")
+	print("Selecting random variants for use in IterativeImputer training data")
 	total_rows = ddf.shape[0].compute()
 	print(f"Found {total_rows} variants with valid rankscores")
 	variant_ids_nonmiss = list(ddf[ddf['__non_miss_rankscore__'] == len(rankscore_cols_keep)]['#Uploaded_variation'].compute())
@@ -100,18 +100,22 @@ def main(args=None):
 	iter_imputer = IterativeImputer(min_value=0, max_value=1, random_state=1398, max_iter=30, verbose=2)
 	iter_imputer_fit = iter_imputer.fit(training_df[rankscore_cols_keep])
 
-	print("Deleting iterativeimputer training data")
+	print("Deleting IterativeImputer training data")
 	del training_df
 
 	print("Imputing annotation file")
 	chunk_paths_imp = fxns.impute_annotation_file(chunk_paths = chunk_paths_orig, iter_imp = iter_imputer_fit, rankscore_cols = rankscore_cols_keep, means = rankscore_means, stddevs = rankscore_stddevs)
 	ddf = dd.read_parquet(chunk_paths_imp)
 
-	print(f"Extracting training data from imputed rankscores for columns {rankscore_cols_keep}")
+	print("Selecting random variants for use in PCA and ICA training data")
 	random.seed(456)
-	total_rows = ddf.shape[0].compute()
+	#total_rows = ddf.shape[0].compute()
 	variant_ids = list(ddf['#Uploaded_variation'].compute())
+	print(f"Found {len(variant_ids)} variants available for training data")
 	random_ids = random.sample(variant_ids, math.ceil(total_rows * 0.25))
+	print(f"Setting number of variants for training data to {math.ceil(total_rows * 0.25)}")
+
+	print(f"Extracting training data from imputed rankscores for columns {rankscore_cols_keep} and centering on full mean values")
 	training_df = ddf[ddf["#Uploaded_variation"].isin(random_ids)][["#Uploaded_variation"] + rankscore_cols_keep].compute()
 	training_df[rankscore_cols_keep] = (training_df[rankscore_cols_keep] - rankscore_means) / rankscore_stddevs
 	

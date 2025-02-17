@@ -22,10 +22,6 @@ def get_max(x):
 
 @resource_tracker
 def process_annotation_file(annot, cols, maf, out_dir, chunk_size=100000, n_partitions = 10):
-
-	def partition_name(n):
-		return f"{os.path.basename(annot)}-{n}.parquet"
-
 	compr = 'gzip' if annot.endswith(".bgz") else 'infer'
 	print(f"Processing annotation file: {annot} (compression={compr})")
 	iter_csv = pd.read_csv(
@@ -47,7 +43,7 @@ def process_annotation_file(annot, cols, maf, out_dir, chunk_size=100000, n_part
 		chunk['REVEL_score_max'] = chunk['REVEL_score'].apply(lambda x: get_max(x))
 		chunk = chunk.merge(maf.loc[maf['#Uploaded_variation'].isin(chunk['#Uploaded_variation'])], on="#Uploaded_variation", how="left")
 		chunk = dd.from_pandas(chunk, npartitions=n_partitions)
-		dd.to_parquet(chunk, f"{out_dir}/chunk{chunk_count}", write_metadata_file=True, name_function = partition_name)
+		dd.to_parquet(chunk, f"{out_dir}/chunk{chunk_count}", write_metadata_file=True, name_function = lambda n: f"{os.path.basename(annot)}-{chunk_count}-{n}.parquet")
 		chunk_paths.extend(glob.glob(f"{out_dir}/chunk{chunk_count}/*.parquet"))
 	print(f"Finished processing annotation file: {annot}")
 	return chunk_paths, chunk_count
