@@ -2,12 +2,15 @@ import pandas as pd
 import numpy as np
 from scipy.stats import pearsonr
 from genemasker.tracking import resource_tracker
+from genemasker.definitions import annot_na_values
+import genemasker.filters as filters
 import math
 import os
 import dask.dataframe as dd
+import glob
 
 def get_max(x):
-	if x == "NaN":
+	if x == "-":
 		result = np.nan
 	else:
 		y=[a for a in str(x).split(",") if a not in ["","."]]
@@ -18,7 +21,7 @@ def get_max(x):
 	return result
 
 @resource_tracker
-def process_annotation_file(annot, cols, out_dir, chunk_size=100000, n_partitions = 10):
+def process_annotation_file(annot, cols, maf, out_dir, chunk_size=100000, n_partitions = 10):
 
 	def partition_name(n):
 		return f"{os.path.basename(annot)}-{n}.parquet"
@@ -31,7 +34,7 @@ def process_annotation_file(annot, cols, out_dir, chunk_size=100000, n_partition
 		chunksize=chunk_size,
 		compression=compr,
 		sep="\t",
-		na_values='-',
+		na_values=annot_na_values,
 		usecols=list(cols.keys()),
 		dtype = cols
 	)
@@ -42,36 +45,72 @@ def process_annotation_file(annot, cols, out_dir, chunk_size=100000, n_partition
 		print(f"  Reading chunk {chunk_count} from {annot}")
 		chunk = chunk[(chunk['Consequence'].str.contains("missense_variant", na=False)) & (chunk['PICK'] == "1")]
 		chunk['REVEL_score_max'] = chunk['REVEL_score'].apply(lambda x: get_max(x))
+		chunk = chunk.merge(maf.loc[maf['#Uploaded_variation'].isin(chunk['#Uploaded_variation'])], on="#Uploaded_variation", how="left")
 		chunk = dd.from_pandas(chunk, npartitions=n_partitions)
 		dd.to_parquet(chunk, f"{out_dir}/chunk{chunk_count}", write_metadata_file=True, name_function = partition_name)
-		chunk_paths.append(f"{out_dir}/chunk{chunk_count}/*.parquet")
+		chunk_paths.extend(glob.glob(f"{out_dir}/chunk{chunk_count}/*.parquet"))
 	print(f"Finished processing annotation file: {annot}")
-	return chunk_paths
+	return chunk_paths, chunk_count
 
 @resource_tracker
-def calculate_correlations(df, cols, maf_col):
-	print("Calculating correlations")
+def impute_annotation_file(chunk_paths, iter_imp, rankscore_cols, means, stddevs):
+	chunk_paths_out = []
+	i = 0
+	for p in chunk_paths:
+		i = i + 1
+		o = p.replace(".parquet",".imputed.parquet")
+		df = pd.read_parquet(p)
+		# mean and center with respect to full dataset
+		df[rankscore_cols] = (df[rankscore_cols] - means) / stddevs
+		df[rankscore_cols] = iter_imp.transform(df[rankscore_cols])
+		df.to_parquet(o, engine="pyarrow", index=False)
+		os.remove(p)
+		print(f"  ({i}/{len(chunk_paths)}) {os.path.basename(p)} -> {os.path.basename(o)}")
+		chunk_paths_out.append(o)
+	print(f"Finished imputing rankscores")
+	return chunk_paths_out
+
+@resource_tracker
+def calculate_pca_ica_scores(chunk_paths, pca_fit, pca_n, ica_fit, rankscore_cols, ica_cols):
+	chunk_paths_out = []
+	i = 0
+	for p in chunk_paths:
+		i = i + 1
+		o = p.replace(".parquet",".scores.parquet")
+		df = pd.read_parquet(p)
+		pca_df = pca_fit.transform(df[rankscore_cols])
+		df = pd.concat([df, pd.DataFrame(data = pca_df, columns = [f"pc{i+1}" for i in range(pca_n)])], axis = 1)
+		ica_df = ica_fit.transform(df[ica_cols])
+		df = pd.concat([df, pd.DataFrame(data = ica_df, columns = [f"ic{i+1}" for i in range(len(ica_cols))])], axis = 1)
+		df.to_parquet(o, engine="pyarrow", index=False)
+		os.remove(p)
+		print(f"  ({i}/{len(chunk_paths)}) {os.path.basename(p)} -> {os.path.basename(o)}")
+		chunk_paths_out.append(o)
+	return chunk_paths_out
+
+@resource_tracker
+def calculate_correlations(ddf, cols, maf_col):
 	correlations = []
+	i = 0
 	for c in cols:
-		print(f"  Calculating correlation for {c}")
-		valid_data = df.dropna(subset=[c, maf_col])
-		if len(valid_data) > 0:
-			r, p = pearsonr(valid_data[c], valid_data[maf_col])
+		i = i + 1
+		print(f"  ({i}/{len(cols)}) corr({c} ~ MAF)")
+		df = ddf[[c, maf_col]].compute()
+		df = df.dropna(subset=[c, maf_col])
+		if len(df) > 0:
+			r, p = pearsonr(df[c], df[maf_col])
 			correlations.append({'Feature': c, 'Pearsonr': r, 'P': p})
-	print("Finished calculating correlations")
 	return pd.DataFrame(correlations)
 
 @resource_tracker
-def calculate_percent_damaging(df):
-	print("Calculating proportion of damage for each prediction algorithm in the annot file")
-	pred_columns = []
-	for col in list(df.columns):
-		if "_pred" in col:
-			pred_columns.append(col)
+def calculate_percent_damaging(ddf, pred_cols):
 	results = pd.DataFrame({"Algorithm": [], "DamagingProp": []})
-	for alg in pred_columns:
-		print(f"  Calculating proportion of damage for {alg}")
-		df_alg = df[alg].dropna().reset_index()
+	i = 0
+	for alg in pred_cols:
+		i = i + 1
+		print(f"  ({i}/{len(pred_cols)}) %_damage({alg})")
+		df_alg = ddf[[alg]].compute()
+		df_alg = df_alg[alg].dropna().reset_index()
 		if alg == "MutationTaster_pred":
 			prop = len(df_alg[(df_alg[alg].str.contains("D")) | (df_alg[alg].str.contains("A"))]) / len(df_alg)
 		elif alg == "MutationAssessor_pred":
@@ -93,13 +132,11 @@ def damaging_pred(row):
 	else:
 		return 0
 
-@resource_tracker
 def get_damaging_pred_og(df):
 	cols_drop=['#Uploaded_variation','Eigen-PC-raw_coding_rankscore', 'Eigen-raw_coding_rankscore', 'Polyphen2_HVAR_rankscore', 'CADD_raw_rankscore_hg19', 'BayesDel_noAF_rankscore', 'MutPred_rankscore', 'LINSIGHT_rankscore']
 	score = (df[[c for c in df.columns if c not in cols_drop]] > 0.67).mean(axis=1, numeric_only=True)
 	return score
 
-@resource_tracker
 def get_damaging_pred_ica(df, ic_corr):
 	ic_corr['Dir'] = np.nan
 	ic_corr.loc[ic_corr['Pearsonr']>0, 'Dir'] = -1.0
@@ -123,7 +160,6 @@ def weighted_pc_score(row, weights):
     df['Weightted_PC_pred'] = df['PC_pred']*df['VarianceExplained']
     return df['Weightted_PC_pred'].sum()
 
-@resource_tracker
 def get_damaging_pred_pca(df, pc_corr, pc_weight):
 	df = df.copy()
 	pc_corr['Dir'] = np.nan
@@ -153,9 +189,64 @@ def get_damaging_pred_pca(df, pc_corr, pc_weight):
 	return score
 
 @resource_tracker
-def get_damaging_pred_all(df):
+def get_damaging_pred_all(ddf):
+	df = ddf[['Combo_mean_score_og','Combo_mean_score_pc','Combo_mean_score_ic']].compute()
 	corr1, p1 = pearsonr(df['Combo_mean_score_og'], df['Combo_mean_score_ic'])
 	corr2, p2 = pearsonr(df['Combo_mean_score_ic'], df['Combo_mean_score_pc'])
 	corr3, p3 = pearsonr(df['Combo_mean_score_pc'], df['Combo_mean_score_og'])
 	results = pd.DataFrame({'Mean_score1': ['Combo_mean_score_og', 'Combo_mean_score_ic', 'Combo_mean_score_pc'], 'Mean_score2': ['Combo_mean_score_ic', 'Combo_mean_score_pc', 'Combo_mean_score_og'], 'Pearsonr': [corr1, corr2, corr3], 'Pvalue': [p1, p2, p3]})
 	return results
+
+@resource_tracker
+def calculate_damage_predictions(chunk_paths, rankscore_cols, ica_cols, pca_n, pc_corr, pca_exp_var, ic_corr):
+	chunk_paths_out = []
+	i = 0
+	for p in chunk_paths:
+		i = i + 1
+		o = p.replace(".parquet",".predictions.parquet")
+		df = pd.read_parquet(p)
+		df['Combo_mean_score_og'] = get_damaging_pred_og(df[rankscore_cols])
+		df['Combo_mean_score_pc'] = get_damaging_pred_pca(df[[f"pc{i+1}" for i in range(pca_n)]], pc_corr, pca_exp_var)
+		df['Combo_mean_score_ic'] = get_damaging_pred_ica(df[[f"ic{i+1}" for i in range(len(ica_cols))]], ic_corr)
+		df.to_parquet(o, engine="pyarrow", index=False)
+		os.remove(p)
+		print(f"  ({i}/{len(chunk_paths)}) {os.path.basename(p)} -> {os.path.basename(o)}")
+		chunk_paths_out.append(o)
+	return chunk_paths_out
+
+@resource_tracker
+def calculate_mask_filters(chunk_paths):
+	chunk_paths_out = []
+	i = 0
+	for p in chunk_paths:
+		i = i + 1
+		o = p.replace(".parquet",".filters.parquet")
+		df = pd.read_parquet(p)
+		df['new_damaging_ic2'] = filters.new_damaging_ic2(df)
+		df['new_damaging_og25'] = filters.new_damaging_og25(df)
+		df['new_damaging_og25_0_01'] = filters.new_damaging_og25_0_01(df)
+		df['new_damaging_og50'] = filters.new_damaging_og50(df)
+		df['new_damaging_og50_0_01'] = filters.new_damaging_og50_0_01(df)
+		df['x23633568_m1'] = filters.x23633568_m1(df)
+		df['x24507775_m6_0_01'] = filters.x24507775_m6_0_01(df)
+		df['x29177435_m1'] = filters.x29177435_m1(df)
+		df['x29378355_m1_0_01'] = filters.x29378355_m1_0_01(df)
+		df['x30269813_m4'] = filters.x30269813_m4(df)
+		df['x30828346_m1'] = filters.x30828346_m1(df)
+		df['x31118516_m5_0_001'] = filters.x31118516_m5_0_001(df)
+		df['x31383942_m10'] = filters.x31383942_m10(df)
+		df['x31383942_m4'] = filters.x31383942_m4(df)
+		df['x32141622_m4'] = filters.x32141622_m4(df)
+		df['x32141622_m7'] = filters.x32141622_m7(df)
+		df['x32141622_m7_0_01'] = filters.x32141622_m7_0_01(df)
+		df['x32853339_m1'] = filters.x32853339_m1(df)
+		df['x34183866_m1'] = filters.x34183866_m1(df)
+		df['x34216101_m3_0_001'] = filters.x34216101_m3_0_001(df)
+		df['x36327219_m3'] = filters.x36327219_m3(df)
+		df['x36411364_m4_0_001'] = filters.x36411364_m4_0_001(df)
+		df['x37348876_m8'] = filters.x37348876_m8(df)
+		df.to_parquet(o, engine="pyarrow", index=False)
+		os.remove(p)
+		print(f"  ({i}/{len(chunk_paths)}) {os.path.basename(p)} -> {os.path.basename(o)}")
+		chunk_paths_out.append(o)
+	return chunk_paths_out
