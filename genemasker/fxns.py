@@ -251,3 +251,35 @@ def calculate_mask_filters(chunk_paths):
 		logger.info(f"  ({i}/{len(chunk_paths)}) {os.path.basename(p)} -> {os.path.basename(o)}")
 		chunk_paths_out.append(o)
 	return chunk_paths_out
+
+@resource_tracker(logger)
+def generate_regenie_groupfiles(ddf, out):
+	masks = ['new_damaging_ic2','new_damaging_og25','new_damaging_og25_0_01','new_damaging_og50','new_damaging_og50_0_01','x23633568_m1','x24507775_m6_0_01','x29177435_m1','x29378355_m1_0_01','x30269813_m4','x30828346_m1','x31118516_m5_0_001','x31383942_m10','x31383942_m4','x32141622_m4','x32141622_m7','x32141622_m7_0_01','x32853339_m1','x34183866_m1','x34216101_m3_0_001','x36327219_m3','x36411364_m4_0_001','x37348876_m8']
+	df = ddf[["#Uploaded_variation",'Gene'] + masks].compute()
+	df[['chr','pos','ref','alt']]=df["#Uploaded_variation"].str.split(":",expand=True)
+	df['chr_num']=df['chr'].str.replace("chr","").replace({'X': '23', 'Y': '24', 'XY': '25', 'MT': '26', 'M': '26'})
+	df.chr_num=df.chr_num.astype(int)
+	df.pos=df.pos.astype(int)
+	df.sort_values(by=['chr_num','pos'],inplace=True)
+	df.reset_index(drop=True, inplace=True)
+	genes=df['Gene'].unique()
+	logger.info("found " + str(len(genes)) + " genes")
+	logger.info("extracting minimum positions for genes")
+	df_first_pos=df[['Gene','chr','chr_num','pos']].drop_duplicates(subset=['Gene'], keep='first')
+	with open(f"{out}.regenie.setlist.tsv", 'w') as setlist:
+		logger.info("grouping variants into genes")
+		setlist_df=df[['Gene','#Uploaded_variation']]
+		setlist_df=setlist_df.groupby('Gene', as_index=False, sort=False).agg(','.join)
+		setlist_df=df_first_pos.merge(setlist_df)
+		setlist_df.sort_values(by=['chr_num','pos'],inplace=True)
+		setlist_df[['Gene','chr','pos','#Uploaded_variation']].to_csv(setlist, header=False, index=False, sep="\t", na_rep="NA")
+	for mask in masks:
+		logger.info("adding annotations for mask " + mask)
+		mask_df=df[df[mask] == True][['#Uploaded_variation','Gene']]
+		mask_df['mask']=mask
+		with open(f"{out}.regenie.annotations.{mask}.tsv", 'w') as annots:
+			logger.info(f"writing annotations to file for mask {mask}")
+			mask_df.to_csv(annots, header=False, index=False, sep="\t", na_rep="NA")
+		with open(f"{out}.regenie.mask.{mask}.tsv", 'w') as mask_file:
+			logger.info(f"writing mask annotations used for mask {mask}")
+			mask_file.write(mask + "\t" + mask)

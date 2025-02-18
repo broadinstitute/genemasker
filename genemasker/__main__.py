@@ -18,41 +18,12 @@ def count_notna(row):
 
 def main(args=None):
 
-	#parser = argparse.ArgumentParser()
-	#parser.add_argument('--version', action='version', version="%(prog)s v" + version)
-	#parser.add_argument('--chunk-size', type=int, default=100000, help='number of annot rows per chunk')
-	#parser.add_argument('--n-partitions', type=int, default=10, help='number of partitions per chunk')
-	#parser.add_argument('--training-frac', type=float, default=0.25, help='fraction of data to use for training models')
-	#parser.add_argument('--annot', required=True, help='VEP annotation files')
-	#parser.add_argument('--stat', required=True, help='MAF file')
-	#parser.add_argument('--stat-id-col', required=True, help='Column name in MAF matching annotation file')
-	#parser.add_argument('--stat-maf-col', required=True, help='MAF column name')
-	#parser.add_argument('--out', required=True, help='Output file prefix')
-	#args = parser.parse_args()
-	#
-	#logger, logger_handler = logging.setup_logger(f"{args.out}.genemasker.log")
-
 	args = fxns.args
 	logger = fxns.logger
 	logger_handler = fxns.logger_handler
 
 	@resource_tracker(logger)
 	def gene_masker(logger, logger_handler):
-
-		# Pass 1
-		# for each chunk:
-		# 	calculate max scores and write to parquet file
-		# read in dask df
-		# drop rows with all NAs in rankscore cols
-		# calculate proportion missingness for all rankscore cols
-		# calculate columns to drop due to missingness
-		# calculate means of each full rankscore
-		# dask sample command to get training data for model fitting
-		# convert to pandas df
-		# subtract rankscore means from pandas df
-		# run iterativeimputer fit method on the pandas df
-		# run pca fit method on the pandas df
-		# run ica fit method on the pandas df
 	
 		logger.info("Reading MAF file")
 		maf_df = pd.read_csv(args.stat, usecols=[args.stat_id_col, args.stat_maf_col], sep="\t")
@@ -116,7 +87,6 @@ def main(args=None):
 	
 		logger.info("Selecting random variants for use in PCA and ICA training data")
 		random.seed(456)
-		#total_rows = ddf.shape[0].compute()
 		variant_ids = list(ddf['#Uploaded_variation'].compute())
 		logger.info(f"Found {len(variant_ids)} variants available for training data")
 		random_ids = random.sample(variant_ids, math.ceil(total_rows * args.training_frac))
@@ -146,39 +116,42 @@ def main(args=None):
 	
 		logger.info("Calculating Rankscore ~ MAF correlations")
 		correlations = fxns.calculate_correlations(ddf, rankscore_cols_keep, 'MAF')
-		#correlations.to_csv(f"{args.out}.rankscore_maf_corr.tsv", sep='\t', index=False)
-		#print(f"Rankscore ~ MAF correlations written to {args.out}.rankscore_maf_corr.tsv")
+		correlations.to_csv(f"{args.out}.rankscore_maf_corr.tsv", sep='\t', index=False)
+		logger.info(f"Rankscore ~ MAF correlations written to {args.out}.rankscore_maf_corr.tsv")
 	
 		logger.info("Calculating PC ~ MAF correlations")
 		pc_correlations = fxns.calculate_correlations(ddf, [f"pc{i+1}" for i in range(n)], 'MAF')
-		#pc_correlations.to_csv(f"{args.out}.pc_maf_corr.tsv", sep='\t', index=False)
-		#print(f"PC ~ MAF correlations written to {args.out}.pc_maf_corr.tsv")
+		pc_correlations.to_csv(f"{args.out}.pc_maf_corr.tsv", sep='\t', index=False)
+		logger.info(f"PC ~ MAF correlations written to {args.out}.pc_maf_corr.tsv")
 	
 		logger.info("Calculating IC ~ MAF correlations")
 		ic_correlations = fxns.calculate_correlations(ddf, [f"ic{i+1}" for i in range(len(ica_cols_keep))], 'MAF')
-		#ic_correlations.to_csv(f"{args.out}.ic_maf_corr.tsv", sep='\t', index=False)
-		#print(f"IC ~ MAF correlations written to {args.out}.ic_maf_corr.tsv")
+		ic_correlations.to_csv(f"{args.out}.ic_maf_corr.tsv", sep='\t', index=False)
+		logger.info(f"IC ~ MAF correlations written to {args.out}.ic_maf_corr.tsv")
 	
 		logger.info("Calculating proportion of damage for each prediction algorithm in the annot file")
 		pred_columns = [x for x in list(ddf.columns) if x.endswith("_pred")]
 		perc_damage = fxns.calculate_percent_damaging(ddf, pred_cols = pred_columns)
 		perc_damage.to_csv(f"{args.out}.damaging_prop.tsv", sep='\t', index=False)
 	
-		logger.info("Calculating combination scores")
+		logger.info("Calculating combined scores")
 		chunk_paths_predicted = fxns.calculate_damage_predictions(chunk_paths = chunk_paths_scored, rankscore_cols = rankscore_cols_keep, ica_cols = ica_cols_keep, pca_n = n, pc_corr = pc_correlations, pca_exp_var = pca_explained_variance, ic_corr = ic_correlations)
 		ddf = dd.read_parquet(chunk_paths_predicted)
 	
-		logger.info("Calculating combination score correlations")
+		logger.info("Calculating combined score correlations")
 		score_corr = fxns.get_damaging_pred_all(ddf)
-		score_corr.to_csv(f"{args.out}.missense_pred.corr.tsv", sep='\t', index=False)
+		score_corr.to_csv(f"{args.out}.combined_score_corr.tsv", sep='\t', index=False)
+		logger.info(f"Combined score correlations written to {args.out}.combined_score_corr.tsv")
 	
-		# compute mask filters
 		logger.info("Calculating gene mask filters")
 		chunk_paths_filters = fxns.calculate_mask_filters(chunk_paths_predicted)
 		ddf = dd.read_parquet(chunk_paths_filters)
+
+		logger.info("Generating Regenie group files")
+		fxns.generate_regenie_groupfiles(ddf, out = args.out)
 	
-		# Write to file
-		ddf.compute().to_csv(f"{args.out}.results.tsv.gz", sep='\t', index=False, compression='gzip')
+		## Write all to file
+		#ddf.compute().to_csv(f"{args.out}.results.tsv.gz", sep='\t', index=False, compression='gzip')
 	
 		logger.info("Execution complete")
 
