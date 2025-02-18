@@ -12,6 +12,7 @@ import genemasker.fxns as fxns
 import dask.dataframe as dd
 import math
 import random
+import shutil
 
 def count_notna(row):
 	return len([x for x in row if not math.isnan(x)])
@@ -24,13 +25,17 @@ def main(args=None):
 
 	@resource_tracker(logger)
 	def gene_masker(logger, logger_handler):
+
+		logger.info("making temporary directory for storing checkpoints")
+		tmpdir = f"{args.out}_tmp"
+		os.makedirs(tmpdir, exist_ok=False)
 	
 		logger.info("Reading MAF file")
 		maf_df = pd.read_csv(args.stat, usecols=[args.stat_id_col, args.stat_maf_col], sep="\t")
 		maf_df.rename(columns={args.stat_id_col: "#Uploaded_variation", args.stat_maf_col: "MAF"}, inplace=True)
 	
 		logger.info("Reading and processing annotation file")
-		chunk_paths_orig, chunk_count_orig = fxns.process_annotation_file(annot = args.annot, cols = annot_cols, maf = maf_df, out_dir = f"{args.out}_tmp", chunk_size = args.chunk_size, n_partitions = args.n_partitions)
+		chunk_paths_orig, chunk_count_orig = fxns.process_annotation_file(annot = args.annot, cols = annot_cols, maf = maf_df, out_dir = tmpdir, chunk_size = args.chunk_size, n_partitions = args.n_partitions)
 		ddf = dd.read_parquet(chunk_paths_orig)
 	
 		rankscore_cols = [col for col in ddf.columns if col.endswith('rankscore')]
@@ -153,7 +158,8 @@ def main(args=None):
 		## Write all to file
 		#ddf.compute().to_csv(f"{args.out}.results.tsv.gz", sep='\t', index=False, compression='gzip')
 	
-		logger.info("Execution complete")
+		logger.info("Execution complete. Cleaning up temporary directory")
+		shutil.rmtree(tmpdir)
 
 	gene_masker(logger, logger_handler)
 
