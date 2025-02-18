@@ -8,6 +8,12 @@ import math
 import os
 import dask.dataframe as dd
 import glob
+import argparse
+import genemasker.config as config
+
+args = config.args
+logger = config.logger
+logger_handler = config.logger_handler
 
 def get_max(x):
 	if x == "-":
@@ -20,10 +26,10 @@ def get_max(x):
 			result = max([float(b) for b in y])
 	return result
 
-@resource_tracker
+@resource_tracker(logger)
 def process_annotation_file(annot, cols, maf, out_dir, chunk_size=100000, n_partitions = 10):
 	compr = 'gzip' if annot.endswith(".bgz") else 'infer'
-	print(f"Processing annotation file: {annot} (compression={compr})")
+	logger.info(f"Processing annotation file: {annot} (compression={compr})")
 	iter_csv = pd.read_csv(
 		annot,
 		iterator=True,
@@ -38,17 +44,17 @@ def process_annotation_file(annot, cols, maf, out_dir, chunk_size=100000, n_part
 	chunk_paths = []
 	for chunk in iter_csv:
 		chunk_count += 1
-		print(f"  Reading chunk {chunk_count} from {annot}")
+		logger.info(f"  Reading chunk {chunk_count} from {annot}")
 		chunk = chunk[(chunk['Consequence'].str.contains("missense_variant", na=False)) & (chunk['PICK'] == "1")]
 		chunk['REVEL_score_max'] = chunk['REVEL_score'].apply(lambda x: get_max(x))
 		chunk = chunk.merge(maf.loc[maf['#Uploaded_variation'].isin(chunk['#Uploaded_variation'])], on="#Uploaded_variation", how="left")
 		chunk = dd.from_pandas(chunk, npartitions=n_partitions)
 		dd.to_parquet(chunk, f"{out_dir}/chunk{chunk_count}", write_metadata_file=True, name_function = lambda n: f"{os.path.basename(annot)}-{chunk_count}-{n}.parquet")
 		chunk_paths.extend(glob.glob(f"{out_dir}/chunk{chunk_count}/*.parquet"))
-	print(f"Finished processing annotation file: {annot}")
+	logger.info(f"Finished processing annotation file: {annot}")
 	return chunk_paths, chunk_count
 
-@resource_tracker
+@resource_tracker(logger)
 def impute_annotation_file(chunk_paths, iter_imp, rankscore_cols, means, stddevs):
 	chunk_paths_out = []
 	i = 0
@@ -61,12 +67,11 @@ def impute_annotation_file(chunk_paths, iter_imp, rankscore_cols, means, stddevs
 		df[rankscore_cols] = iter_imp.transform(df[rankscore_cols])
 		df.to_parquet(o, engine="pyarrow", index=False)
 		os.remove(p)
-		print(f"  ({i}/{len(chunk_paths)}) {os.path.basename(p)} -> {os.path.basename(o)}")
+		logger.info(f"  ({i}/{len(chunk_paths)}) {os.path.basename(p)} -> {os.path.basename(o)}")
 		chunk_paths_out.append(o)
-	print(f"Finished imputing rankscores")
 	return chunk_paths_out
 
-@resource_tracker
+@resource_tracker(logger)
 def calculate_pca_ica_scores(chunk_paths, pca_fit, pca_n, ica_fit, rankscore_cols, ica_cols):
 	chunk_paths_out = []
 	i = 0
@@ -80,17 +85,17 @@ def calculate_pca_ica_scores(chunk_paths, pca_fit, pca_n, ica_fit, rankscore_col
 		df = pd.concat([df, pd.DataFrame(data = ica_df, columns = [f"ic{i+1}" for i in range(len(ica_cols))])], axis = 1)
 		df.to_parquet(o, engine="pyarrow", index=False)
 		os.remove(p)
-		print(f"  ({i}/{len(chunk_paths)}) {os.path.basename(p)} -> {os.path.basename(o)}")
+		logger.info(f"  ({i}/{len(chunk_paths)}) {os.path.basename(p)} -> {os.path.basename(o)}")
 		chunk_paths_out.append(o)
 	return chunk_paths_out
 
-@resource_tracker
+@resource_tracker(logger)
 def calculate_correlations(ddf, cols, maf_col):
 	correlations = []
 	i = 0
 	for c in cols:
 		i = i + 1
-		print(f"  ({i}/{len(cols)}) corr({c} ~ MAF)")
+		logger.info(f"  ({i}/{len(cols)}) corr({c} ~ MAF)")
 		df = ddf[[c, maf_col]].compute()
 		df = df.dropna(subset=[c, maf_col])
 		if len(df) > 0:
@@ -98,13 +103,13 @@ def calculate_correlations(ddf, cols, maf_col):
 			correlations.append({'Feature': c, 'Pearsonr': r, 'P': p})
 	return pd.DataFrame(correlations)
 
-@resource_tracker
+@resource_tracker(logger)
 def calculate_percent_damaging(ddf, pred_cols):
 	results = pd.DataFrame({"Algorithm": [], "DamagingProp": []})
 	i = 0
 	for alg in pred_cols:
 		i = i + 1
-		print(f"  ({i}/{len(pred_cols)}) %_damage({alg})")
+		logger.info(f"  ({i}/{len(pred_cols)}) %_damage({alg})")
 		df_alg = ddf[[alg]].compute()
 		df_alg = df_alg[alg].dropna().reset_index()
 		if alg == "MutationTaster_pred":
@@ -184,7 +189,7 @@ def get_damaging_pred_pca(df, pc_corr, pc_weight):
 	score = df_rankscore.apply(weighted_pc_score, args=[pc_weight], axis=1)
 	return score
 
-@resource_tracker
+@resource_tracker(logger)
 def get_damaging_pred_all(ddf):
 	df = ddf[['Combo_mean_score_og','Combo_mean_score_pc','Combo_mean_score_ic']].compute()
 	corr1, p1 = pearsonr(df['Combo_mean_score_og'], df['Combo_mean_score_ic'])
@@ -193,7 +198,7 @@ def get_damaging_pred_all(ddf):
 	results = pd.DataFrame({'Mean_score1': ['Combo_mean_score_og', 'Combo_mean_score_ic', 'Combo_mean_score_pc'], 'Mean_score2': ['Combo_mean_score_ic', 'Combo_mean_score_pc', 'Combo_mean_score_og'], 'Pearsonr': [corr1, corr2, corr3], 'Pvalue': [p1, p2, p3]})
 	return results
 
-@resource_tracker
+@resource_tracker(logger)
 def calculate_damage_predictions(chunk_paths, rankscore_cols, ica_cols, pca_n, pc_corr, pca_exp_var, ic_corr):
 	chunk_paths_out = []
 	i = 0
@@ -206,11 +211,11 @@ def calculate_damage_predictions(chunk_paths, rankscore_cols, ica_cols, pca_n, p
 		df['Combo_mean_score_ic'] = get_damaging_pred_ica(df[[f"ic{i+1}" for i in range(len(ica_cols))]], ic_corr)
 		df.to_parquet(o, engine="pyarrow", index=False)
 		os.remove(p)
-		print(f"  ({i}/{len(chunk_paths)}) {os.path.basename(p)} -> {os.path.basename(o)}")
+		logger.info(f"  ({i}/{len(chunk_paths)}) {os.path.basename(p)} -> {os.path.basename(o)}")
 		chunk_paths_out.append(o)
 	return chunk_paths_out
 
-@resource_tracker
+@resource_tracker(logger)
 def calculate_mask_filters(chunk_paths):
 	chunk_paths_out = []
 	i = 0
@@ -243,6 +248,6 @@ def calculate_mask_filters(chunk_paths):
 		df['x37348876_m8'] = filters.x37348876_m8(df)
 		df.to_parquet(o, engine="pyarrow", index=False)
 		os.remove(p)
-		print(f"  ({i}/{len(chunk_paths)}) {os.path.basename(p)} -> {os.path.basename(o)}")
+		logger.info(f"  ({i}/{len(chunk_paths)}) {os.path.basename(p)} -> {os.path.basename(o)}")
 		chunk_paths_out.append(o)
 	return chunk_paths_out
