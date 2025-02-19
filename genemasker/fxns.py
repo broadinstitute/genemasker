@@ -145,11 +145,13 @@ def damaging_pred(row):
 	else:
 		return 0
 
+@resource_tracker(logger)
 def get_damaging_pred_og(df):
 	cols_drop=['#Uploaded_variation','Eigen-PC-raw_coding_rankscore', 'Eigen-raw_coding_rankscore', 'Polyphen2_HVAR_rankscore', 'CADD_raw_rankscore_hg19', 'BayesDel_noAF_rankscore', 'MutPred_rankscore', 'LINSIGHT_rankscore']
 	score = (df[[c for c in df.columns if c not in cols_drop]] > 0.67).mean(axis=1, numeric_only=True)
 	return score
 
+@resource_tracker(logger)
 def get_damaging_pred_ica(df, ic_corr):
 	ic_corr['Dir'] = np.nan
 	ic_corr.loc[ic_corr['Pearsonr']>0, 'Dir'] = -1.0
@@ -173,6 +175,7 @@ def weighted_pc_score(row, weights):
     df['Weightted_PC_pred'] = df['PC_pred']*df['VarianceExplained']
     return df['Weightted_PC_pred'].sum()
 
+@resource_tracker(logger)
 def get_damaging_pred_pca(df, pc_corr, pc_weight):
 	df = df.copy()
 	pc_corr['Dir'] = np.nan
