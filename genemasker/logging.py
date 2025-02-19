@@ -23,7 +23,7 @@ def setup_logger(logfile):
 	
 	logger_handler = MultiLogger(sys.stdout, logfile)
 	
-	formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", datefmt = "%Y-%m-%d %H:%M:%S")
+	formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", datefmt = "%Y-%m-%d %H:%M:%S %Z")
 	logger_handler.setFormatter(formatter)
 	
 	logger.addHandler(logger_handler)

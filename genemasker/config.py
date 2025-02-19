@@ -15,3 +15,8 @@ parser.add_argument('--out', required=True, help='Output file prefix')
 args = parser.parse_args()
 
 logger, logger_handler = logging.setup_logger(f"{args.out}.genemasker.log")
+
+logger.info(f"genemasker v{version}")
+logger.info("user-supplied arguments:")
+for key, value in vars(args).items():
+    logger.info(f"  {key}: {value}")

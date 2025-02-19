@@ -55,6 +55,18 @@ def process_annotation_file(annot, cols, maf, out_dir, chunk_size=100000, n_part
 	return chunk_paths, chunk_count
 
 @resource_tracker(logger)
+def filter_annotation_file(chunk_paths, cols, ids):
+	i = 0
+	fdfs = []
+	for p in chunk_paths:
+		i = i + 1
+		df = pd.read_parquet(p, columns = cols)
+		df = df[df["#Uploaded_variation"].isin(ids)]
+		fdfs = fdfs + [df]
+		logger.info(f"  ({i}/{len(chunk_paths)}) filter {os.path.basename(p)}")
+	return pd.concat(fdfs, ignore_index=True) if fdfs else pd.DataFrame()
+
+@resource_tracker(logger)
 def impute_annotation_file(chunk_paths, iter_imp, rankscore_cols, means, stddevs):
 	chunk_paths_out = []
 	i = 0
