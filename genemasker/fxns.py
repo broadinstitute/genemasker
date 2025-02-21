@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 from scipy.stats import pearsonr
+from sklearn.decomposition import IncrementalPCA
 from genemasker.tracking import resource_tracker
 from genemasker.definitions import annot_na_values
 import genemasker.filters as filters
@@ -40,31 +41,39 @@ def process_annotation_file(annot, cols, maf, out_dir, chunk_size=100000, n_part
 		usecols=list(cols.keys()),
 		dtype = cols
 	)
+	raw_variant_count = 0
+	stored_variant_count = 0
 	chunk_count = 0
 	chunk_paths = []
 	for chunk in iter_csv:
 		chunk_count += 1
 		logger.info(f"  Reading chunk {chunk_count} from {annot}")
+		raw_variant_count = raw_variant_count + chunk.shape[0]
 		chunk = chunk[(chunk['Consequence'].str.contains("missense_variant", na=False)) & (chunk['PICK'] == "1")]
 		chunk['REVEL_score_max'] = chunk['REVEL_score'].apply(lambda x: get_max(x))
 		chunk = chunk.merge(maf.loc[maf['#Uploaded_variation'].isin(chunk['#Uploaded_variation'])], on="#Uploaded_variation", how="left")
+		stored_variant_count = stored_variant_count + chunk.shape[0]
 		chunk = dd.from_pandas(chunk, npartitions=n_partitions)
 		dd.to_parquet(chunk, f"{out_dir}/chunk{chunk_count}", write_metadata_file=True, name_function = lambda n: f"{os.path.basename(annot)}-{chunk_count}-{n}.parquet")
 		chunk_paths.extend(glob.glob(f"{out_dir}/chunk{chunk_count}/*.parquet"))
 	logger.info(f"Finished processing annotation file: {annot}")
-	return chunk_paths, chunk_count
+	return chunk_paths, chunk_count, raw_variant_count, stored_variant_count
 
 @resource_tracker(logger)
 def filter_annotation_file(chunk_paths, cols, ids):
 	i = 0
 	fdfs = []
+	n = 0
+	m = 0
 	for p in chunk_paths:
 		i = i + 1
 		df = pd.read_parquet(p, columns = cols)
+		m = m + df.shape[0]
 		df = df[df["#Uploaded_variation"].isin(ids)]
 		fdfs = fdfs + [df]
-		logger.info(f"  ({i}/{len(chunk_paths)}) filter {os.path.basename(p)}")
-	return pd.concat(fdfs, ignore_index=True) if fdfs else pd.DataFrame()
+		n = n + df.shape[0]
+		logger.info(f"  ({i}/{len(chunk_paths)}) filter {os.path.basename(p)}: {df.shape[0]}[{n}/{m}]")
+	return pd.concat(fdfs, sort=False, ignore_index=True) if fdfs else pd.DataFrame()
 
 @resource_tracker(logger)
 def impute_annotation_file(chunk_paths, iter_imp, rankscore_cols, means, stddevs):
@@ -84,13 +93,28 @@ def impute_annotation_file(chunk_paths, iter_imp, rankscore_cols, means, stddevs
 	return chunk_paths_out
 
 @resource_tracker(logger)
-def calculate_pca_ica_scores(chunk_paths, pca_fit, pca_n, ica_fit, rankscore_cols, ica_cols):
+def fit_incremental_pca(chunk_paths, rankscore_cols, means, stddevs):
+	pca = IncrementalPCA(n_components = len(rankscore_cols))
+	i = 0
+	for p in chunk_paths:
+		i = i + 1
+		df = pd.read_parquet(p)
+		# mean and center with respect to full dataset
+		df[rankscore_cols] = (df[rankscore_cols] - means) / stddevs
+		pca.partial_fit(df[rankscore_cols])
+		logger.info(f"  ({i}/{len(chunk_paths)}) incremental pca partial fit on {os.path.basename(p)} complete")
+	return pca
+
+@resource_tracker(logger)
+def calculate_pca_ica_scores(chunk_paths, pca_fit, pca_n, ica_fit, rankscore_cols, ica_cols, means, stddevs):
 	chunk_paths_out = []
 	i = 0
 	for p in chunk_paths:
 		i = i + 1
 		o = p.replace(".parquet",".scores.parquet")
 		df = pd.read_parquet(p)
+		# mean and center with respect to full dataset
+		df[rankscore_cols] = (df[rankscore_cols] - means) / stddevs
 		pca_df = pca_fit.transform(df[rankscore_cols])
 		df = pd.concat([df, pd.DataFrame(data = pca_df, columns = [f"pc{i+1}" for i in range(pca_n)])], axis = 1)
 		ica_df = ica_fit.transform(df[ica_cols])
@@ -167,17 +191,9 @@ def get_damaging_pred_ica(df, ic_corr):
 	score = (df_rankscore > 0.67).mean(axis=1, numeric_only=True)
 	return score
 
-def weighted_pc_score(row, weights):
-    weights['PC'] = weights['PC'] + "_rankscore"
-    row = row.reset_index()
-    row.columns = ['PC', 'PC_pred']
-    df = pd.merge(row, weights, how='left', on='PC')
-    df['Weightted_PC_pred'] = df['PC_pred']*df['VarianceExplained']
-    return df['Weightted_PC_pred'].sum()
-
 @resource_tracker(logger)
 def get_damaging_pred_pca(df, pc_corr, pc_weight):
-	df = df.copy()
+	#df = df.copy()
 	pc_corr['Dir'] = np.nan
 	pc_corr.loc[pc_corr['Pearsonr']>0, 'Dir'] = -1
 	pc_corr.loc[pc_corr['Pearsonr']<0, 'Dir'] = 1
@@ -199,10 +215,12 @@ def get_damaging_pred_pca(df, pc_corr, pc_weight):
 	pc_weight['PC'] = [f'pc{i+1}' for i in range(len(pc_weight))]
 	pc_weight.loc[pc_weight['PC'].isin(pc_to_drop),'VarianceExplained'] = np.nan
 	pc_weight = pc_weight.dropna()
+	pc_weight['PC'] = pc_weight['PC'] + "_rankscore"
 	sum_weight = pc_weight['VarianceExplained'].sum()
 	pc_weight['VarianceExplained'] = pc_weight['VarianceExplained']/sum_weight
-	score = df_rankscore.apply(weighted_pc_score, args=[pc_weight], axis=1)
-	return score
+	pc_weight = pc_weight.set_index('PC',drop=True)
+	weighted_scores = df_rankscore * pc_weight['VarianceExplained']
+	return weighted_scores.sum(axis=1)
 
 @resource_tracker(logger)
 def get_damaging_pred_all(ddf):
