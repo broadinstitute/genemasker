@@ -3,7 +3,7 @@
 import numpy as np
 import pandas as pd
 import os
-from sklearn.decomposition import FastICA
+from sklearn.decomposition import PCA, FastICA
 from sklearn.experimental import enable_iterative_imputer
 from sklearn.impute import IterativeImputer
 from genemasker.definitions import annot_cols
@@ -90,14 +90,14 @@ def main(args=None):
 
 			iter_imputer = IterativeImputer(min_value=0, max_value=1, random_state=1398, max_iter=30, verbose=2)
 
-			if args.training_frac:
+			if args.impute_training_frac:
 				logger.info("Selecting random variants for imputer training data")
 				random.seed(123)
-				random_ids_nonmiss = random.sample(variant_ids_nonmiss, math.ceil(valid_rows * args.training_frac * 0.6))
-				random_ids_somemiss = random.sample(variant_ids_somemiss, math.ceil(valid_rows * args.training_frac * 0.4))
-				logger.info(f"Setting total rows in training dataset to {math.ceil(valid_rows * args.training_frac)} ({len(random_ids_nonmiss) + len(random_ids_somemiss)} found)")
-				logger.info(f"Setting number of variants with no missing rankscores to {math.ceil(valid_rows * args.training_frac * 0.6)} ({len(random_ids_nonmiss)} found)")
-				logger.info(f"Setting number of variants with some missing rankscores to {math.ceil(valid_rows * args.training_frac * 0.4)} ({len(random_ids_somemiss)} found)")
+				random_ids_nonmiss = random.sample(variant_ids_nonmiss, math.ceil(valid_rows * args.impute_training_frac * 0.6))
+				random_ids_somemiss = random.sample(variant_ids_somemiss, math.ceil(valid_rows * args.impute_training_frac * 0.4))
+				logger.info(f"Setting total rows in training dataset to {math.ceil(valid_rows * args.impute_training_frac)} ({len(random_ids_nonmiss) + len(random_ids_somemiss)} found)")
+				logger.info(f"Setting number of variants with no missing rankscores to {math.ceil(valid_rows * args.impute_training_frac * 0.6)} ({len(random_ids_nonmiss)} found)")
+				logger.info(f"Setting number of variants with some missing rankscores to {math.ceil(valid_rows * args.impute_training_frac * 0.4)} ({len(random_ids_somemiss)} found)")
 			
 				logger.info(f"Extracting imputer training data for columns {rankscore_cols_keep} and centering on full mean values")
 				training_df = fxns.filter_annotation_file(chunk_paths_orig, ["#Uploaded_variation"] + rankscore_cols_keep, random_ids_nonmiss + random_ids_somemiss)
@@ -127,10 +127,46 @@ def main(args=None):
 			ddf = dd.read_parquet(chunk_paths_imp)
 			logger.info(f"""Average partition size of imputed annot file in chunk1: {avg_chunk_size([c for c in chunk_paths_imp if "/chunk1/" in c])}""")
 
-			logger.info(f"Fitting model for incremental PCA on columns {rankscore_cols_keep} using centered training data")
-			pca_fit = fxns.fit_incremental_pca(chunk_paths_imp, rankscore_cols_keep, means = rankscore_means, stddevs = rankscore_stddevs)
+			if args.pca_method == 'incremental':
+				logger.info(f"Fitting model for incremental PCA on columns {rankscore_cols_keep} using centered training data")
+				pca_fit = fxns.fit_incremental_pca(chunk_paths_imp, rankscore_cols_keep, means = rankscore_means, stddevs = rankscore_stddevs)
+
+			else:
+				pca = PCA(n_components = len(rankscore_cols_keep))
+				if args.pca_training_frac:
+					logger.info("Selecting random variants for use in PCA training data")
+					random.seed(456)
+					variant_ids = list(ddf['#Uploaded_variation'].compute())
+					logger.info(f"Found {len(variant_ids)} variants available for training data")
+					random_ids = random.sample(variant_ids, math.ceil(valid_rows * args.pca_training_frac))
+					logger.info(f"Setting number of variants for PCA training data to {math.ceil(valid_rows * args.pca_training_frac)}")
+				
+					logger.info(f"Extracting PCA training data from imputed rankscores for columns {rankscore_cols_keep} and centering on full mean values")
+					training_df = fxns.filter_annotation_file(chunk_paths_imp, ["#Uploaded_variation"] + rankscore_cols_keep, random_ids)
+					logger.info(f"ICA training data contains {training_df.shape[0]} variants")
+					training_df[rankscore_cols_keep] = (training_df[rankscore_cols_keep] - rankscore_means) / rankscore_stddevs
+	
+					logger.info(f"Fitting model for PCA on columns {rankscore_cols_keep} using centered training data")
+					pca_fit = pca.fit(training_df[rankscore_cols_keep])
+
+					logger.info("Deleting PCA training data")
+					del training_df
+
+				else:
+					logger.info(f"Extracting PCA full data from imputed rankscores for columns {rankscore_cols_keep} and centering on full mean values")
+					full_df = ddf[["#Uploaded_variation"] + rankscore_cols_keep].compute()
+					logger.info(f"PCA full data contains {full_df.shape[0]} variants")
+					full_df[rankscore_cols_keep] = (full_df[rankscore_cols_keep] - rankscore_means) / rankscore_stddevs
+
+					logger.info(f"Fitting model for PCA on columns {rankscore_cols_keep} using centered full data")
+					pca_fit = pca.fit(full_df[rankscore_cols_keep])
+
+					logger.info("Deleting PCA full data")
+					del full_df
+
 			pca_explained_variance = pd.DataFrame({'VarianceExplained': pca_fit.explained_variance_ratio_.cumsum()})
 			pca_explained_variance.to_csv(f"{args.out}.pca_explained_variance.tsv", sep='\t', index=False)
+			logger.info(f"PCA explained variance written to {args.out}.pca_explained_variance.tsv")
 
 			fast_ica = FastICA(n_components=None, random_state=43, whiten=False, max_iter=5000)
 			ica_cols_keep = [col for col in rankscore_cols_keep if col not in ['Eigen-PC-raw_coding_rankscore', 'Eigen-raw_coding_rankscore', 'Polyphen2_HVAR_rankscore', 'CADD_raw_rankscore_hg19', 'BayesDel_noAF_rankscore']]
@@ -139,18 +175,18 @@ def main(args=None):
 			logger.info("Calculating rankscore stddevs on full data")
 			ica_rankscore_stddevs = ddf[ica_cols_keep].std().compute()
 
-			if args.training_frac:
+			if args.ica_training_frac:
 				logger.info("Selecting random variants for use in ICA training data")
-				random.seed(456)
+				random.seed(789)
 				variant_ids = list(ddf['#Uploaded_variation'].compute())
 				logger.info(f"Found {len(variant_ids)} variants available for training data")
-				random_ids = random.sample(variant_ids, math.ceil(valid_rows * args.training_frac))
-				logger.info(f"Setting number of variants for ICA training data to {math.ceil(valid_rows * args.training_frac)}")
+				random_ids = random.sample(variant_ids, math.ceil(valid_rows * args.ica_training_frac))
+				logger.info(f"Setting number of variants for ICA training data to {math.ceil(valid_rows * args.ica_training_frac)}")
 			
 				logger.info(f"Extracting ICA training data from imputed rankscores for columns {ica_cols_keep} and centering on full mean values")
 				training_df = fxns.filter_annotation_file(chunk_paths_imp, ["#Uploaded_variation"] + ica_cols_keep, random_ids)
 				logger.info(f"ICA training data contains {training_df.shape[0]} variants")
-				training_df[ica_cols_keep] = (training_df[ica_cols_keep] - ica_rankscore_means) / ica_rankscore_means
+				training_df[ica_cols_keep] = (training_df[ica_cols_keep] - ica_rankscore_means) / ica_rankscore_stddevs
 
 				logger.info(f"Fitting model for ICA on columns {ica_cols_keep} using centered training data")
 				fast_ica_fit = fast_ica.fit(training_df[ica_cols_keep])
@@ -159,14 +195,13 @@ def main(args=None):
 				del training_df
 
 			else:
-				logger.info(f"Extracting ICA full data from imputed rankscores for columns {ica_rankscore_means} and centering on full mean values")
-				full_df = ddf[["#Uploaded_variation"] + ica_rankscore_means].compute()
+				logger.info(f"Extracting ICA full data from imputed rankscores for columns {ica_cols_keep} and centering on full mean values")
+				full_df = ddf[["#Uploaded_variation"] + ica_cols_keep].compute()
 				logger.info(f"ICA full data contains {full_df.shape[0]} variants")
-				full_df[ica_rankscore_means] = (full_df[ica_rankscore_means] - ica_rankscore_means) / ica_rankscore_means
-			
-				ica_cols_keep = [col for col in ica_rankscore_means if col not in ['Eigen-PC-raw_coding_rankscore', 'Eigen-raw_coding_rankscore', 'Polyphen2_HVAR_rankscore', 'CADD_raw_rankscore_hg19', 'BayesDel_noAF_rankscore', 'MAF']]
+				full_df[ica_cols_keep] = (full_df[ica_cols_keep] - ica_rankscore_means) / ica_rankscore_stddevs
+
 				logger.info(f"Fitting model for ICA on columns {ica_cols_keep} using centered full data")
-				fast_ica_fit = fast_ica.fit(training_df[ica_cols_keep])
+				fast_ica_fit = fast_ica.fit(full_df[ica_cols_keep])
 			
 				logger.info("Deleting ICA full data")
 				del full_df
