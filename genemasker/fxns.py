@@ -16,6 +16,9 @@ args = config.args
 logger = config.logger
 logger_handler = config.logger_handler
 
+def count_notna(row):
+	return len([x for x in row if not math.isnan(x)])
+
 def get_max(x):
 	if x == "-":
 		result = np.nan
@@ -30,6 +33,7 @@ def get_max(x):
 @resource_tracker(logger)
 def process_annotation_file(annot, cols, maf, out_dir, chunk_size=100000, n_partitions = 10):
 	compr = 'gzip' if annot.endswith(".bgz") else 'infer'
+	rankscore_cols = [col for col in cols.keys() if col.endswith('rankscore') or col.endswith('rankscore_hg19')]
 	logger.info(f"Processing annotation file: {annot} (compression={compr})")
 	iter_csv = pd.read_csv(
 		annot,
@@ -50,6 +54,7 @@ def process_annotation_file(annot, cols, maf, out_dir, chunk_size=100000, n_part
 		logger.info(f"  Reading chunk {chunk_count} from {annot}")
 		raw_variant_count = raw_variant_count + chunk.shape[0]
 		chunk = chunk[(chunk['Consequence'].str.contains("missense_variant", na=False)) & (chunk['PICK'] == "1")]
+		chunk = chunk.dropna(how='all', subset=rankscore_cols)
 		chunk['REVEL_score_max'] = chunk['REVEL_score'].apply(lambda x: get_max(x))
 		chunk = chunk.merge(maf.loc[maf['#Uploaded_variation'].isin(chunk['#Uploaded_variation'])], on="#Uploaded_variation", how="left")
 		stored_variant_count = stored_variant_count + chunk.shape[0]
@@ -57,7 +62,7 @@ def process_annotation_file(annot, cols, maf, out_dir, chunk_size=100000, n_part
 		dd.to_parquet(chunk, f"{out_dir}/chunk{chunk_count}", write_metadata_file=True, name_function = lambda n: f"{os.path.basename(annot)}-{chunk_count}-{n}.parquet")
 		chunk_paths.extend(glob.glob(f"{out_dir}/chunk{chunk_count}/*.parquet"))
 	logger.info(f"Finished processing annotation file: {annot}")
-	return chunk_paths, chunk_count, raw_variant_count, stored_variant_count
+	return chunk_paths, chunk_count, raw_variant_count, stored_variant_count, rankscore_cols
 
 @resource_tracker(logger)
 def filter_annotation_file(chunk_paths, cols, ids):

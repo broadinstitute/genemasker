@@ -24,9 +24,6 @@ def avg_chunk_size(chunk_list):
 		result = result / 1024
 	return f"{result:.2f} tb"
 
-def count_notna(row):
-	return len([x for x in row if not math.isnan(x)])
-
 def main(args=None):
 
 	args = fxns.args
@@ -47,18 +44,18 @@ def main(args=None):
 			maf_df.rename(columns={args.stat_id_col: "#Uploaded_variation", args.stat_maf_col: "MAF"}, inplace=True)
 		
 			logger.info("Reading and processing annotation file")
-			chunk_paths_orig, chunk_count_orig, raw_variant_count, stored_variant_count = fxns.process_annotation_file(annot = args.annot, cols = annot_cols, maf = maf_df, out_dir = tmpdir, chunk_size = args.chunk_size, n_partitions = args.n_partitions)
+			chunk_paths_orig, chunk_count_orig, raw_variant_count, stored_variant_count, rankscore_cols = fxns.process_annotation_file(annot = args.annot, cols = annot_cols, maf = maf_df, out_dir = tmpdir, chunk_size = args.chunk_size, n_partitions = args.n_partitions)
 			ddf = dd.read_parquet(chunk_paths_orig)
 			logger.info(f"""Average partition size of raw annot file in chunk1: {avg_chunk_size([c for c in chunk_paths_orig if "/chunk1/" in c])}""")
 			logger.info(f"Found {raw_variant_count} variants in raw annot file and stored {stored_variant_count}")
 			total_rows = ddf.shape[0].compute()
 			logger.info(f"Found {total_rows} variants in dask annot file")
 		
-			rankscore_cols = [col for col in ddf.columns if col.endswith('rankscore') or col.endswith('rankscore_hg19')]
-		
-			logger.info("Counting non-missing rankscores")
-			ddf['__non_miss_rankscore__'] = ddf[rankscore_cols].apply(count_notna, axis=1, meta=('x','int'))
-			ddf = ddf.loc[ddf['__non_miss_rankscore__'] > 0]
+			#logger.info("Counting non-missing rankscores")
+			#ddf['__non_miss_rankscore__'] = ddf[rankscore_cols].apply(count_notna, axis=1, meta=('x','int'))
+			#logger.info(f"pre-filter: {ddf.shape[0].compute()}")
+			#ddf = ddf.loc[ddf['__non_miss_rankscore__'] > 0]
+			#logger.info(f"post-filter: {ddf.shape[0].compute()}")
 			
 			logger.info("Calculating missing proportions")
 			na_count = ddf[[col for col in ddf.columns if col.endswith('rankscore')]].isna().mean().reset_index().compute()
@@ -73,7 +70,7 @@ def main(args=None):
 			logger.info(f"Keeping ranskcores: {rankscore_cols_keep}")
 
 			logger.info("Update non-missing rankscores count")
-			ddf['__non_miss_rankscore_keep__'] = ddf[rankscore_cols_keep].apply(count_notna, axis=1, meta=('x','int'))
+			ddf['__non_miss_rankscore_keep__'] = ddf[rankscore_cols_keep].apply(fxns.count_notna, axis=1, meta=('x','int'))
 
 			logger.info("Calculating rankscore means on full data")
 			rankscore_means = ddf[rankscore_cols_keep].mean().compute()
