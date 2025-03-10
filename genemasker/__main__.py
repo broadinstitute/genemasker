@@ -132,8 +132,8 @@ def main(args=None):
 				logger.info("Calculating rankscore stddevs on full data")
 				imputed_rankscore_stddevs = ddf[rankscore_cols_keep].std().compute()
 
-			if args.pca_method == 'incremental':
-				logger.info(f"Fitting model for incremental PCA on columns {rankscore_cols_keep} using centered training data")
+			if args.pca_fit_method == 'incremental':
+				logger.info(f"Fitting model for incremental PCA on columns {rankscore_cols_keep}")
 				pca_fit = fxns.fit_incremental_pca(chunk_paths_imp, rankscore_cols_keep, means = imputed_rankscore_means, stddevs = imputed_rankscore_stddevs)
 
 			else:
@@ -153,7 +153,7 @@ def main(args=None):
 						logger.info(f"Centering and scaling training data for pca")
 						training_df[rankscore_cols_keep] = (training_df[rankscore_cols_keep] - imputed_rankscore_means) / imputed_rankscore_stddevs
 	
-					logger.info(f"Fitting model for PCA on columns {rankscore_cols_keep} using centered training data")
+					logger.info(f"Fitting model for PCA on columns {rankscore_cols_keep}")
 					pca_fit = pca.fit(training_df[rankscore_cols_keep])
 
 					logger.info("Deleting PCA training data")
@@ -167,7 +167,7 @@ def main(args=None):
 						logger.info(f"Centering and scaling training data for pca")
 						full_df[rankscore_cols_keep] = (full_df[rankscore_cols_keep] - imputed_rankscore_means) / imputed_rankscore_stddevs
 
-					logger.info(f"Fitting model for PCA on columns {rankscore_cols_keep} using centered full data")
+					logger.info(f"Fitting model for PCA on columns {rankscore_cols_keep}")
 					pca_fit = pca.fit(full_df[rankscore_cols_keep])
 
 					logger.info("Deleting PCA full data")
@@ -195,7 +195,7 @@ def main(args=None):
 					logger.info(f"Centering and scaling training data for ica")
 					training_df[ica_cols_keep] = (training_df[ica_cols_keep] - imputed_rankscore_means) / imputed_rankscore_stddevs
 
-				logger.info(f"Fitting model for ICA on columns {ica_cols_keep} using centered training data")
+				logger.info(f"Fitting model for ICA on columns {ica_cols_keep}")
 				fast_ica_fit = fast_ica.fit(training_df[ica_cols_keep])
 			
 				logger.info("Deleting ICA training data")
@@ -209,7 +209,7 @@ def main(args=None):
 					logger.info(f"Centering and scaling training data for ica")
 					full_df[ica_cols_keep] = (full_df[ica_cols_keep] - imputed_rankscore_means) / imputed_rankscore_stddevs
 
-				logger.info(f"Fitting model for ICA on columns {ica_cols_keep} using centered full data")
+				logger.info(f"Fitting model for ICA on columns {ica_cols_keep}")
 				fast_ica_fit = fast_ica.fit(full_df[ica_cols_keep])
 			
 				logger.info("Deleting ICA full data")

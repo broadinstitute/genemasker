@@ -31,7 +31,7 @@ def get_max(x):
 	return result
 
 @resource_tracker(logger)
-def process_annotation_file(annot, cols, maf, out_dir, chunk_size=100000, n_partitions = 10):
+def process_annotation_file(annot, cols, maf, out_dir, chunk_size=None, n_partitions = 1):
 	compr = 'gzip' if annot.endswith(".bgz") else 'infer'
 	rankscore_cols = [col for col in cols.keys() if col.endswith('rankscore') or col.endswith('rankscore_hg19')]
 	logger.info(f"Processing annotation file: {annot} (compression={compr})")
