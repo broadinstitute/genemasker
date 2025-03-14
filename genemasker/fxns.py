@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 from scipy.stats import pearsonr
 from sklearn.decomposition import IncrementalPCA
+from sklearn.preprocessing import StandardScaler
 from genemasker.tracking import resource_tracker
 from genemasker.definitions import annot_na_values
 import genemasker.filters as filters
@@ -81,20 +82,17 @@ def filter_annotation_file(chunk_paths, cols, ids):
 	return pd.concat(fdfs, sort=False, ignore_index=True) if fdfs else pd.DataFrame()
 
 @resource_tracker(logger)
-def impute_annotation_file(chunk_paths, iter_imp, rankscore_cols, means = None, stddevs = None):
-	if (means is not None and stddevs is None) or (means is None and stddevs is not None):
-		raise ValueError("impute_annotation_file(): means and stddevs must both be passed together")
+def impute_annotation_file(chunk_paths, iter_imp, rankscore_cols, scaler_fit = None):
 	chunk_paths_out = []
 	i = 0
 	for p in chunk_paths:
 		i = i + 1
 		o = p.replace(".parquet",".imputed.parquet")
 		df = pd.read_parquet(p)
-		if means is not None:
-			# mean and center with respect to full dataset
-			df_center_scale = df.copy()
-			df_center_scale[rankscore_cols] = (df_center_scale[rankscore_cols] - means) / stddevs
-			df[rankscore_cols] = iter_imp.transform(df_center_scale[rankscore_cols])
+		if scaler_fit is not None:
+			df_center_scale = scaler_fit.transform(df[rankscore_cols])
+			df_center_scale = iter_imp.transform(df_center_scale)
+			df[rankscore_cols] = scaler_fit.inverse_transform(df_center_scale)
 		else:
 			df[rankscore_cols] = iter_imp.transform(df[rankscore_cols])
 		df.to_parquet(o, engine="pyarrow", index=False)
@@ -104,46 +102,38 @@ def impute_annotation_file(chunk_paths, iter_imp, rankscore_cols, means = None, 
 	return chunk_paths_out
 
 @resource_tracker(logger)
-def fit_incremental_pca(chunk_paths, rankscore_cols, means, stddevs):
+def fit_incremental_pca(chunk_paths, rankscore_cols, scaler_fit = None):
 	pca = IncrementalPCA(n_components = len(rankscore_cols))
 	i = 0
 	for p in chunk_paths:
 		i = i + 1
 		df = pd.read_parquet(p)
-		# mean and center with respect to full dataset
-		df[rankscore_cols] = (df[rankscore_cols] - means) / stddevs
+		if scaler_fit is not None:
+			df[rankscore_cols] = scaler_fit.transform(df[rankscore_cols])
 		pca.partial_fit(df[rankscore_cols])
 		logger.info(f"  ({i}/{len(chunk_paths)}) incremental pca partial fit on {os.path.basename(p)} complete")
 	return pca
 
 @resource_tracker(logger)
-def calculate_pca_ica_scores(chunk_paths, pca_fit, pca_n, ica_fit, rankscore_cols, ica_cols, pca_means = None, pca_stddevs = None, ica_means = None, ica_stddevs = None):
-	if (pca_means is not None and pca_stddevs is None) or (pca_means is None and pca_stddevs is not None):
-		raise ValueError("calculate_pca_ica_scores(): pca_means and pca_stddevs must both be passed together")
-	if (ica_means is not None and ica_stddevs is None) or (ica_means is None and ica_stddevs is not None):
-		raise ValueError("calculate_pca_ica_scores(): ica_means and ica_stddevs must both be passed together")
+def calculate_pca_ica_scores(chunk_paths, pca_fit, pca_n, ica_fit, rankscore_cols, ica_cols, pca_scaler_fit = None, ica_scaler_fit = None):
+	if pca_fit is None and (pca_scaler_fit is None or ica_scaler_fit is None):
+		raise ValueError("calculate_pca_ica_scores(): if pca_fit is None, then both pca_scaler_fit and ica_scaler_fit must be defined")
 	chunk_paths_out = []
 	i = 0
 	for p in chunk_paths:
 		i = i + 1
 		o = p.replace(".parquet",".scores.parquet")
 		df = pd.read_parquet(p)
-		if pca_means is not None:
-			# mean and center with respect to full dataset
-			df_pca = df.copy()
-			df_pca[rankscore_cols] = (df_pca[rankscore_cols] - pca_means) / pca_stddevs
-			df_trans = pca_fit.transform(df_pca[rankscore_cols])
+		if pca_scaler_fit is not None:
+			df_pca_trans = pca_scaler_fit.transform(df[rankscore_cols])
 		else:
-			df_trans = pca_fit.transform(df[rankscore_cols])
-		df = pd.concat([df, pd.DataFrame(data = df_trans, columns = [f"pc{i+1}" for i in range(pca_n)])], axis = 1)
-		if ica_means is not None:
-			# mean and center with respect to full dataset
-			df_ica = df.copy()
-			df_ica[ica_cols] = (df_ica[ica_cols] - pca_means) / pca_stddevs
-			df_trans = ica_fit.transform(df_ica[ica_cols])
+			df_pca_trans = pca_fit.transform(df[rankscore_cols])
+		df = pd.concat([df, pd.DataFrame(data = df_pca_trans, columns = [f"pc{i+1}" for i in range(pca_n)])], axis = 1)
+		if ica_scaler_fit is not None:
+			df_ica_trans = ica_scaler_fit.transform(df[ica_cols])
 		else:
-			df_trans = ica_fit.transform(df[ica_cols])
-		df = pd.concat([df, pd.DataFrame(data = df_trans, columns = [f"ic{i+1}" for i in range(len(ica_cols))])], axis = 1)
+			df_ica_trans = ica_fit.transform(df[ica_cols])
+		df = pd.concat([df, pd.DataFrame(data = df_ica_trans, columns = [f"ic{i+1}" for i in range(len(ica_cols))])], axis = 1)
 		df.to_parquet(o, engine="pyarrow", index=False)
 		#os.remove(p)
 		logger.info(f"  ({i}/{len(chunk_paths)}) {os.path.basename(p)} -> {os.path.basename(o)}")

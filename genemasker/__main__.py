@@ -5,6 +5,7 @@ import pandas as pd
 import os
 from sklearn.decomposition import PCA, FastICA
 from sklearn.experimental import enable_iterative_imputer
+from sklearn.preprocessing import StandardScaler
 from sklearn.impute import IterativeImputer
 from genemasker.definitions import annot_cols
 from genemasker.tracking import resource_tracker
@@ -66,11 +67,11 @@ def main(args=None):
 			logger.info("Update non-missing rankscores count")
 			ddf['__non_miss_rankscore_keep__'] = ddf[rankscore_cols_keep].apply(fxns.count_notna, axis=1, meta=('x','int'))
 
-			if args.impute_center_scale:
-				logger.info("Calculating rankscore means on full data for imputation model")
-				rankscore_means = ddf[rankscore_cols_keep].mean().compute()
-				logger.info("Calculating rankscore stddevs on full data")
-				rankscore_stddevs = ddf[rankscore_cols_keep].std().compute()
+			scaler_fit = None
+			if not args.impute_nonstandardized:
+				logger.info("Fitting standard scaler on full rankscores for imputation")
+				scaler = StandardScaler()
+				scaler_fit = scaler.fit(ddf[rankscore_cols_keep].compute())
 
 			logger.info("Selecting variants for imputer training data")
 			valid_rows = ddf.shape[0].compute()
@@ -81,7 +82,7 @@ def main(args=None):
 			logger.info(f"Found {len(variant_ids_somemiss)} variants with some missing rankscores")
 
 			iter_imputer = IterativeImputer(min_value=0, max_value=1, random_state=1398, max_iter=30, verbose=2)
-
+			
 			if args.impute_training_frac:
 				logger.info("Selecting random variants for imputer training data")
 				random.seed(123)
@@ -94,9 +95,9 @@ def main(args=None):
 				logger.info(f"Extracting imputer training data for columns {rankscore_cols_keep}")
 				training_df = fxns.filter_annotation_file(chunk_paths_orig, ["#Uploaded_variation"] + rankscore_cols_keep, random_ids_nonmiss + random_ids_somemiss)
 				logger.info(f"Imputer training data contains {training_df.shape[0]} variants")
-				if args.impute_center_scale:
+				if not args.impute_nonstandardized:
 					logger.info(f"Centering and scaling training data for imputation")
-					training_df[rankscore_cols_keep] = (training_df[rankscore_cols_keep] - rankscore_means) / rankscore_stddevs
+					training_df[rankscore_cols_keep] = scaler_fit.transform(training_df[rankscore_cols_keep])
 		
 				logger.info("Fitting iterative imputer for training data")
 				iter_imputer_fit = iter_imputer.fit(training_df[rankscore_cols_keep])
@@ -108,9 +109,9 @@ def main(args=None):
 				logger.info(f"Extracting imputer training data for columns {rankscore_cols_keep}")
 				full_df = fxns.filter_annotation_file(chunk_paths_orig, ["#Uploaded_variation"] + rankscore_cols_keep, variant_ids_nonmiss + variant_ids_somemiss)
 				logger.info(f"Imputer full data contains {full_df.shape[0]} variants")
-				if args.impute_center_scale:
+				if not args.impute_nonstandardized:
 					logger.info(f"Centering and scaling training data for imputation")
-					full_df[rankscore_cols_keep] = (full_df[rankscore_cols_keep] - rankscore_means) / rankscore_stddevs
+					full_df[rankscore_cols_keep] = scaler_fit.transform(full_df[rankscore_cols_keep])
 
 				logger.info("Fitting iterative imputer for full dataset")
 				iter_imputer_fit = iter_imputer.fit(full_df[rankscore_cols_keep])
@@ -119,22 +120,27 @@ def main(args=None):
 				del full_df
 		
 			logger.info("Imputing annotation file")
-			if args.impute_center_scale:
-				chunk_paths_imp = fxns.impute_annotation_file(chunk_paths = chunk_paths_orig, iter_imp = iter_imputer_fit, rankscore_cols = rankscore_cols_keep, means = rankscore_means, stddevs = rankscore_stddevs)
-			else:
-				chunk_paths_imp = fxns.impute_annotation_file(chunk_paths = chunk_paths_orig, iter_imp = iter_imputer_fit, rankscore_cols = rankscore_cols_keep)
+			chunk_paths_imp = fxns.impute_annotation_file(chunk_paths = chunk_paths_orig, iter_imp = iter_imputer_fit, rankscore_cols = rankscore_cols_keep, scaler_fit = scaler_fit)
 			ddf = dd.read_parquet(chunk_paths_imp)
 			logger.info(f"""Average partition size of imputed annot file in chunk1: {avg_chunk_size([c for c in chunk_paths_imp if "/chunk1/" in c])}""")
-			
-			if args.pca_center_scale or args.ica_center_scale:
-				logger.info("Calculating rankscore means on imputed data for pca model")
-				imputed_rankscore_means = ddf[rankscore_cols_keep].mean().compute()
-				logger.info("Calculating rankscore stddevs on full data")
-				imputed_rankscore_stddevs = ddf[rankscore_cols_keep].std().compute()
+
+			#imputed_rankscore_means = None
+			#imputed_rankscore_stddevs = None
+			#if args.pca_center_scale or args.ica_center_scale:
+			#	logger.info("Calculating rankscore means on imputed data for pca model")
+			#	imputed_rankscore_means = ddf[rankscore_cols_keep].mean().compute()
+			#	logger.info("Calculating rankscore stddevs on imputed data")
+			#	imputed_rankscore_stddevs = ddf[rankscore_cols_keep].std().compute()
+				
+			imputed_scaler_fit = None
+			if not args.pca_nonstandardized or not args.ica_nonstandardized:
+				logger.info("Fitting standard scaler on imputed rankscores for pca and/or ica")
+				imputed_scaler = StandardScaler()
+				imputed_scaler_fit = imputed_scaler.fit(ddf[rankscore_cols_keep].compute())
 
 			if args.pca_fit_method == 'incremental':
 				logger.info(f"Fitting model for incremental PCA on columns {rankscore_cols_keep}")
-				pca_fit = fxns.fit_incremental_pca(chunk_paths_imp, rankscore_cols_keep, means = imputed_rankscore_means, stddevs = imputed_rankscore_stddevs)
+				pca_fit = fxns.fit_incremental_pca(chunk_paths_imp, rankscore_cols_keep, scaler_fit = imputed_scaler_fit)
 
 			else:
 				pca = PCA(n_components = len(rankscore_cols_keep))
@@ -149,9 +155,9 @@ def main(args=None):
 					logger.info(f"Extracting PCA training data from imputed rankscores for columns {rankscore_cols_keep}")
 					training_df = fxns.filter_annotation_file(chunk_paths_imp, ["#Uploaded_variation"] + rankscore_cols_keep, random_ids)
 					logger.info(f"ICA training data contains {training_df.shape[0]} variants")
-					if args.pca_center_scale:
+					if not args.pca_nonstandardized:
 						logger.info(f"Centering and scaling training data for pca")
-						training_df[rankscore_cols_keep] = (training_df[rankscore_cols_keep] - imputed_rankscore_means) / imputed_rankscore_stddevs
+						training_df[rankscore_cols_keep] = imputed_scaler_fit.transform(training_df[rankscore_cols_keep])
 	
 					logger.info(f"Fitting model for PCA on columns {rankscore_cols_keep}")
 					pca_fit = pca.fit(training_df[rankscore_cols_keep])
@@ -163,9 +169,9 @@ def main(args=None):
 					logger.info(f"Extracting PCA full data from imputed rankscores for columns {rankscore_cols_keep}")
 					full_df = ddf[["#Uploaded_variation"] + rankscore_cols_keep].compute()
 					logger.info(f"PCA full data contains {full_df.shape[0]} variants")
-					if args.pca_center_scale:
+					if not args.pca_nonstandardized:
 						logger.info(f"Centering and scaling training data for pca")
-						full_df[rankscore_cols_keep] = (full_df[rankscore_cols_keep] - imputed_rankscore_means) / imputed_rankscore_stddevs
+						full_df[rankscore_cols_keep] = imputed_scaler_fit.transform(full_df[rankscore_cols_keep])
 
 					logger.info(f"Fitting model for PCA on columns {rankscore_cols_keep}")
 					pca_fit = pca.fit(full_df[rankscore_cols_keep])
@@ -177,7 +183,7 @@ def main(args=None):
 			pca_explained_variance.to_csv(f"{args.out}.pca_explained_variance.tsv", sep='\t', index=False)
 			logger.info(f"PCA explained variance written to {args.out}.pca_explained_variance.tsv")
 
-			fast_ica = FastICA(n_components=None, random_state=43, whiten=False, max_iter=5000)
+			fast_ica = FastICA(n_components=None, random_state=0, max_iter=5000)
 			ica_cols_keep = [col for col in rankscore_cols_keep if col not in ['Eigen-PC-raw_coding_rankscore', 'Eigen-raw_coding_rankscore', 'Polyphen2_HVAR_rankscore', 'CADD_raw_rankscore_hg19', 'BayesDel_noAF_rankscore']]
 
 			if args.ica_training_frac:
@@ -191,9 +197,9 @@ def main(args=None):
 				logger.info(f"Extracting ICA training data from imputed rankscores for columns {ica_cols_keep}")
 				training_df = fxns.filter_annotation_file(chunk_paths_imp, ["#Uploaded_variation"] + ica_cols_keep, random_ids)
 				logger.info(f"ICA training data contains {training_df.shape[0]} variants")
-				if args.ica_center_scale:
+				if not args.ica_nonstandardized:
 					logger.info(f"Centering and scaling training data for ica")
-					training_df[ica_cols_keep] = (training_df[ica_cols_keep] - imputed_rankscore_means) / imputed_rankscore_stddevs
+					training_df[ica_cols_keep] = imputed_scaler_fit.transform(training_df[ica_cols_keep])
 
 				logger.info(f"Fitting model for ICA on columns {ica_cols_keep}")
 				fast_ica_fit = fast_ica.fit(training_df[ica_cols_keep])
@@ -205,9 +211,9 @@ def main(args=None):
 				logger.info(f"Extracting ICA full data from imputed rankscores for columns {ica_cols_keep}")
 				full_df = ddf[["#Uploaded_variation"] + ica_cols_keep].compute()
 				logger.info(f"ICA full data contains {full_df.shape[0]} variants")
-				if args.ica_center_scale:
+				if not args.ica_nonstandardized:
 					logger.info(f"Centering and scaling training data for ica")
-					full_df[ica_cols_keep] = (full_df[ica_cols_keep] - imputed_rankscore_means) / imputed_rankscore_stddevs
+					full_df[ica_cols_keep] = imputed_scaler_fit.transform(full_df[ica_cols_keep])
 
 				logger.info(f"Fitting model for ICA on columns {ica_cols_keep}")
 				fast_ica_fit = fast_ica.fit(full_df[ica_cols_keep])
@@ -216,19 +222,10 @@ def main(args=None):
 				del full_df
 		
 			logger.info("Calculating pca and ica scores")
-			if args.pca_center_scale:
-				pca_means = imputed_rankscore_means
-				pca_stddevs = imputed_rankscore_stddevs
-			else:
-				pca_means = None
-				pca_stddevs = None
-			if args.ica_center_scale:
-				ica_means = imputed_rankscore_means
-				ica_stddevs = imputed_rankscore_stddevs
-			else:
-				ica_means = None
-				ica_stddevs = None
-			chunk_paths_scored = fxns.calculate_pca_ica_scores(chunk_paths = chunk_paths_imp, pca_fit = pca_fit, ica_fit = fast_ica_fit, pca_n = len(rankscore_cols_keep), rankscore_cols = rankscore_cols_keep, ica_cols = ica_cols_keep, pca_means = pca_means, pca_stddevs = pca_stddevs, ica_means = ica_means, ica_stddevs = ica_stddevs)
+			pca_fit_orig = pca_fit if args.pca_nonstandardized or args.ica_nonstandardized else None
+			pca_scaler_fit = imputed_scaler_fit if not args.pca_nonstandardized else None
+			ica_scaler_fit = imputed_scaler_fit if not args.ica_nonstandardized else None
+			chunk_paths_scored = fxns.calculate_pca_ica_scores(chunk_paths = chunk_paths_imp, pca_fit = pca_fit_orig, ica_fit = fast_ica_fit, pca_n = len(rankscore_cols_keep), rankscore_cols = rankscore_cols_keep, ica_cols = ica_cols_keep, pca_scaler_fit = pca_scaler_fit, ica_scaler_fit = ica_scaler_fit)
 			ddf = dd.read_parquet(chunk_paths_scored)
 			logger.info(f"""Average partition size of imputed annot file with pca and ica scores in chunk1: {avg_chunk_size([c for c in chunk_paths_scored if "/chunk1/" in c])}""")
 		
