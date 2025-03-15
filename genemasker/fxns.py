@@ -116,8 +116,6 @@ def fit_incremental_pca(chunk_paths, rankscore_cols, scaler_fit = None):
 
 @resource_tracker(logger)
 def calculate_pca_ica_scores(chunk_paths, pca_fit, pca_n, ica_fit, rankscore_cols, ica_cols, pca_scaler_fit = None, ica_scaler_fit = None):
-	if pca_fit is None and (pca_scaler_fit is None or ica_scaler_fit is None):
-		raise ValueError("calculate_pca_ica_scores(): if pca_fit is None, then both pca_scaler_fit and ica_scaler_fit must be defined")
 	chunk_paths_out = []
 	i = 0
 	for p in chunk_paths:
@@ -126,14 +124,12 @@ def calculate_pca_ica_scores(chunk_paths, pca_fit, pca_n, ica_fit, rankscore_col
 		df = pd.read_parquet(p)
 		if pca_scaler_fit is not None:
 			df_pca_trans = pca_scaler_fit.transform(df[rankscore_cols])
-		else:
-			df_pca_trans = pca_fit.transform(df[rankscore_cols])
-		df = pd.concat([df, pd.DataFrame(data = df_pca_trans, columns = [f"pc{i+1}" for i in range(pca_n)])], axis = 1)
+		df_pca_fit = pca_fit.transform(df_pca_trans)
+		df = pd.concat([df, pd.DataFrame(data = df_pca_fit, columns = [f"pc{i+1}" for i in range(pca_n)])], axis = 1)
 		if ica_scaler_fit is not None:
 			df_ica_trans = ica_scaler_fit.transform(df[ica_cols])
-		else:
-			df_ica_trans = ica_fit.transform(df[ica_cols])
-		df = pd.concat([df, pd.DataFrame(data = df_ica_trans, columns = [f"ic{i+1}" for i in range(len(ica_cols))])], axis = 1)
+		df_ica_fit = ica_fit.transform(df_ica_trans)
+		df = pd.concat([df, pd.DataFrame(data = df_ica_fit, columns = [f"ic{i+1}" for i in range(len(ica_cols))])], axis = 1)
 		df.to_parquet(o, engine="pyarrow", index=False)
 		#os.remove(p)
 		logger.info(f"  ({i}/{len(chunk_paths)}) {os.path.basename(p)} -> {os.path.basename(o)}")

@@ -134,7 +134,7 @@ def main(args=None):
 				
 			imputed_scaler_fit = None
 			if not args.pca_nonstandardized or not args.ica_nonstandardized:
-				logger.info("Fitting standard scaler on imputed rankscores for pca and/or ica")
+				logger.info("Fitting standard scaler on imputed rankscores for pca")
 				imputed_scaler = StandardScaler()
 				imputed_scaler_fit = imputed_scaler.fit(ddf[rankscore_cols_keep].compute())
 
@@ -185,6 +185,12 @@ def main(args=None):
 
 			fast_ica = FastICA(n_components=None, random_state=0, max_iter=5000)
 			ica_cols_keep = [col for col in rankscore_cols_keep if col not in ['Eigen-PC-raw_coding_rankscore', 'Eigen-raw_coding_rankscore', 'Polyphen2_HVAR_rankscore', 'CADD_raw_rankscore_hg19', 'BayesDel_noAF_rankscore']]
+			
+			ica_scaler_fit = None
+			if not args.ica_nonstandardized:
+				logger.info("Fitting standard scaler on imputed rankscores for ica")
+				ica_scaler = StandardScaler()
+				ica_scaler_fit = ica_scaler.fit(ddf[ica_cols_keep].compute())
 
 			if args.ica_training_frac:
 				logger.info("Selecting random variants for use in ICA training data")
@@ -199,7 +205,7 @@ def main(args=None):
 				logger.info(f"ICA training data contains {training_df.shape[0]} variants")
 				if not args.ica_nonstandardized:
 					logger.info(f"Centering and scaling training data for ica")
-					training_df[ica_cols_keep] = imputed_scaler_fit.transform(training_df[ica_cols_keep])
+					training_df[ica_cols_keep] = ica_scaler_fit.transform(training_df[ica_cols_keep])
 
 				logger.info(f"Fitting model for ICA on columns {ica_cols_keep}")
 				fast_ica_fit = fast_ica.fit(training_df[ica_cols_keep])
@@ -212,8 +218,8 @@ def main(args=None):
 				full_df = ddf[["#Uploaded_variation"] + ica_cols_keep].compute()
 				logger.info(f"ICA full data contains {full_df.shape[0]} variants")
 				if not args.ica_nonstandardized:
-					logger.info(f"Centering and scaling training data for ica")
-					full_df[ica_cols_keep] = imputed_scaler_fit.transform(full_df[ica_cols_keep])
+					logger.info(f"Centering and scaling training data for ica on columns {ica_cols_keep}")
+					full_df[ica_cols_keep] = ica_scaler_fit.transform(full_df[ica_cols_keep])
 
 				logger.info(f"Fitting model for ICA on columns {ica_cols_keep}")
 				fast_ica_fit = fast_ica.fit(full_df[ica_cols_keep])
@@ -222,10 +228,7 @@ def main(args=None):
 				del full_df
 		
 			logger.info("Calculating pca and ica scores")
-			pca_fit_orig = pca_fit if args.pca_nonstandardized or args.ica_nonstandardized else None
-			pca_scaler_fit = imputed_scaler_fit if not args.pca_nonstandardized else None
-			ica_scaler_fit = imputed_scaler_fit if not args.ica_nonstandardized else None
-			chunk_paths_scored = fxns.calculate_pca_ica_scores(chunk_paths = chunk_paths_imp, pca_fit = pca_fit_orig, ica_fit = fast_ica_fit, pca_n = len(rankscore_cols_keep), rankscore_cols = rankscore_cols_keep, ica_cols = ica_cols_keep, pca_scaler_fit = pca_scaler_fit, ica_scaler_fit = ica_scaler_fit)
+			chunk_paths_scored = fxns.calculate_pca_ica_scores(chunk_paths = chunk_paths_imp, pca_fit = pca_fit, ica_fit = fast_ica_fit, pca_n = len(rankscore_cols_keep), rankscore_cols = rankscore_cols_keep, ica_cols = ica_cols_keep, pca_scaler_fit = imputed_scaler_fit, ica_scaler_fit = ica_scaler_fit)
 			ddf = dd.read_parquet(chunk_paths_scored)
 			logger.info(f"""Average partition size of imputed annot file with pca and ica scores in chunk1: {avg_chunk_size([c for c in chunk_paths_scored if "/chunk1/" in c])}""")
 		
