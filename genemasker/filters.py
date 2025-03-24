@@ -111,7 +111,7 @@ def IMPACT_MODERATE(row):
 	return(any(x in row['IMPACT'] for x in ['MODERATE']))
 
 # masks
-def new_damaging_ic2(df):
+def new_damaging_ic25(df):
 	return(df.apply(lambda x: LoF_HC(x) or (missense(x) and combo_ic25(x)), axis=1))
 
 def new_damaging_og25(df):

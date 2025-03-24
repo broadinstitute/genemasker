@@ -48,22 +48,31 @@ def process_annotation_file(annot, cols, maf, out_dir, chunk_size=None, n_partit
 	)
 	raw_variant_count = 0
 	stored_variant_count = 0
+	stored_missense_variant_count = 0
 	chunk_count = 0
 	chunk_paths = []
+	chunk_missense_paths = []
 	for chunk in iter_csv:
 		chunk_count += 1
 		logger.info(f"  Reading chunk {chunk_count} from {annot}")
 		raw_variant_count = raw_variant_count + chunk.shape[0]
-		chunk = chunk[(chunk['Consequence'].str.contains("missense_variant", na=False)) & (chunk['PICK'] == "1")]
-		chunk = chunk.dropna(how='all', subset=rankscore_cols)
+		chunk = chunk[chunk['PICK'] == "1"]
 		chunk['REVEL_score_max'] = chunk['REVEL_score'].apply(lambda x: get_max(x))
 		chunk = chunk.merge(maf.loc[maf['#Uploaded_variation'].isin(chunk['#Uploaded_variation'])], on="#Uploaded_variation", how="left")
 		stored_variant_count = stored_variant_count + chunk.shape[0]
-		chunk = dd.from_pandas(chunk, npartitions=n_partitions)
-		dd.to_parquet(chunk, f"{out_dir}/chunk{chunk_count}", write_metadata_file=True, name_function = lambda n: f"{os.path.basename(annot)}-{chunk_count}-{n}.parquet")
-		chunk_paths.extend(glob.glob(f"{out_dir}/chunk{chunk_count}/*.parquet"))
+		#dd_chunk = dd.from_pandas(chunk, npartitions=n_partitions)
+		#dd.to_parquet(dd_chunk, f"{out_dir}/chunk{chunk_count}", write_metadata_file=True, name_function = lambda n: f"{os.path.basename(annot)}-{chunk_count}-{n}.parquet")
+		chunk.to_parquet(f"{out_dir}/{os.path.basename(annot)}-{chunk_count}.parquet", index=False)
+		#chunk_paths.extend(glob.glob(f"{out_dir}/chunk{chunk_count}/*.parquet"))
+		chunk_paths.append(f"{out_dir}/{os.path.basename(annot)}-{chunk_count}.parquet")
+		chunk = chunk[chunk['Consequence'].str.contains("missense_variant", na=False)]
+		chunk = chunk[["#Uploaded_variation","MAF"] + rankscore_cols]
+		chunk = chunk.dropna(subset = rankscore_cols, how='all')
+		stored_missense_variant_count = stored_missense_variant_count + chunk.shape[0]
+		chunk.to_parquet(f"{out_dir}/{os.path.basename(annot)}-{chunk_count}.missense.parquet", index=False)
+		chunk_missense_paths.append(f"{out_dir}/{os.path.basename(annot)}-{chunk_count}.missense.parquet")
 	logger.info(f"Finished processing annotation file: {annot}")
-	return chunk_paths, chunk_count, raw_variant_count, stored_variant_count, rankscore_cols
+	return chunk_paths, chunk_missense_paths, chunk_count, raw_variant_count, stored_variant_count, stored_missense_variant_count, rankscore_cols
 
 @resource_tracker(logger)
 def filter_annotation_file(chunk_paths, cols, ids):
@@ -152,7 +161,7 @@ def calculate_correlations(ddf, cols, maf_col):
 
 @resource_tracker(logger)
 def calculate_percent_damaging(ddf, pred_cols):
-	results = pd.DataFrame({"Algorithm": [], "DamagingProp": []})
+	results = pd.DataFrame({"Algorithm": [], "DamagingProportion": []})
 	i = 0
 	for alg in pred_cols:
 		i = i + 1
@@ -167,9 +176,9 @@ def calculate_percent_damaging(ddf, pred_cols):
 			prop = len(df_alg[(df_alg[alg].str.contains("Recessive")) | (df_alg[alg].str.contains("Dominant"))]) / len(df_alg)
 		else:
 			prop = len(df_alg[(df_alg[alg].str.contains("D"))]) / len(df_alg)
-		results = pd.concat([results, pd.DataFrame({"Algorithm": [alg], "DamagingProp": [prop]})], ignore_index=True)
-	results = results.sort_values("DamagingProp")
-	results = pd.concat([results, pd.DataFrame({"Algorithm": ["Mean"], "DamagingProp": [results["DamagingProp"].mean()]})], ignore_index=True)
+		results = pd.concat([results, pd.DataFrame({"Algorithm": [alg], "DamagingProportion": [prop]})], ignore_index=True)
+	results = results.sort_values("DamagingProportion")
+	results = pd.concat([results, pd.DataFrame({"Algorithm": ["Mean"], "DamagingProportion": [results["DamagingProportion"].mean()]})], ignore_index=True)
 	return results
 
 def damaging_pred(row):
@@ -258,6 +267,21 @@ def calculate_damage_predictions(chunk_paths, rankscore_cols, ica_cols, pca_n, p
 		logger.info(f"  ({i}/{len(chunk_paths)}) {os.path.basename(p)} -> {os.path.basename(o)}")
 		chunk_paths_out.append(o)
 	return chunk_paths_out
+	
+@resource_tracker(logger)
+def merge_annot_scores(chunk_paths):
+	chunk_paths_out = []
+	i = 0
+	for p in chunk_paths:
+		i = i + 1
+		q = p.replace(".parquet",".missense.imputed.scores.predictions.parquet")
+		o = p.replace(".parquet",".scored.parquet")
+		df = pd.read_parquet(p)
+		df_scores = pd.read_parquet(q)
+		df = df.merge(df_scores[["#Uploaded_variation","Combo_mean_score_og","Combo_mean_score_pc","Combo_mean_score_ic"]], on="#Uploaded_variation", how="left")
+		df.to_parquet(o, engine="pyarrow", index=False)
+		chunk_paths_out.append(o)
+	return chunk_paths_out
 
 @resource_tracker(logger)
 def calculate_mask_filters(chunk_paths):
@@ -267,7 +291,7 @@ def calculate_mask_filters(chunk_paths):
 		i = i + 1
 		o = p.replace(".parquet",".filters.parquet")
 		df = pd.read_parquet(p)
-		df['new_damaging_ic2'] = filters.new_damaging_ic2(df)
+		df['new_damaging_ic25'] = filters.new_damaging_ic25(df)
 		df['new_damaging_og25'] = filters.new_damaging_og25(df)
 		df['new_damaging_og25_0_01'] = filters.new_damaging_og25_0_01(df)
 		df['new_damaging_og50'] = filters.new_damaging_og50(df)
@@ -298,7 +322,7 @@ def calculate_mask_filters(chunk_paths):
 
 @resource_tracker(logger)
 def generate_regenie_groupfiles(ddf, out):
-	masks = ['new_damaging_ic2','new_damaging_og25','new_damaging_og25_0_01','new_damaging_og50','new_damaging_og50_0_01','x23633568_m1','x24507775_m6_0_01','x29177435_m1','x29378355_m1_0_01','x30269813_m4','x30828346_m1','x31118516_m5_0_001','x31383942_m10','x31383942_m4','x32141622_m4','x32141622_m7','x32141622_m7_0_01','x32853339_m1','x34183866_m1','x34216101_m3_0_001','x36327219_m3','x36411364_m4_0_001','x37348876_m8']
+	masks = ['new_damaging_ic25','new_damaging_og25','new_damaging_og25_0_01','new_damaging_og50','new_damaging_og50_0_01','x23633568_m1','x24507775_m6_0_01','x29177435_m1','x29378355_m1_0_01','x30269813_m4','x30828346_m1','x31118516_m5_0_001','x31383942_m10','x31383942_m4','x32141622_m4','x32141622_m7','x32141622_m7_0_01','x32853339_m1','x34183866_m1','x34216101_m3_0_001','x36327219_m3','x36411364_m4_0_001','x37348876_m8']
 	df = ddf[["#Uploaded_variation",'Gene'] + masks].compute()
 	df[['chr','pos','ref','alt']]=df["#Uploaded_variation"].str.split(":",expand=True)
 	df['chr_num']=df['chr'].str.replace("chr","").replace({'X': '23', 'Y': '24', 'XY': '25', 'MT': '26', 'M': '26'})

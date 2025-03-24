@@ -5,7 +5,6 @@ import genemasker.logging as logging
 parser = argparse.ArgumentParser()
 parser.add_argument('--version', action='version', version="%(prog)s v" + version)
 parser.add_argument('--chunk-size', type=int, default=None, help='number of annot rows per chunk')
-parser.add_argument('--n-partitions', type=int, default=1, help='number of partitions per chunk')
 parser.add_argument('--pca-fit-method', choices=['incremental','standard'], default='standard', help='PCA model fit method')
 parser.add_argument('--pca-training-frac', type=float, help='fraction of data to use for training pca models')
 parser.add_argument('--impute-training-frac', type=float, help='fraction of data to use for training imputer models')
