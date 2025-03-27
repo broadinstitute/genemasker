@@ -124,21 +124,39 @@ def fit_incremental_pca(chunk_paths, rankscore_cols, scaler_fit = None):
 	return pca
 
 @resource_tracker(logger)
-def calculate_pca_ica_scores(chunk_paths, pca_fit, pca_n, ica_fit, rankscore_cols, ica_cols, pca_scaler_fit = None, ica_scaler_fit = None):
+def calculate_pca_scores(chunk_paths, pca_n, rankscore_cols, pca_fit = None, full_df_pca = None, pca_scaler_fit = None):
 	chunk_paths_out = []
 	i = 0
 	for p in chunk_paths:
 		i = i + 1
-		o = p.replace(".parquet",".scores.parquet")
+		o = p.replace(".parquet",".pca.parquet")
 		df = pd.read_parquet(p)
-		if pca_scaler_fit is not None:
-			df_pca_trans = pca_scaler_fit.transform(df[rankscore_cols])
-		df_pca_fit = pca_fit.transform(df_pca_trans)
-		df = pd.concat([df, pd.DataFrame(data = df_pca_fit, columns = [f"pc{i+1}" for i in range(pca_n)])], axis = 1)
-		if ica_scaler_fit is not None:
-			df_ica_trans = ica_scaler_fit.transform(df[ica_cols])
-		df_ica_fit = ica_fit.transform(df_ica_trans)
-		df = pd.concat([df, pd.DataFrame(data = df_ica_fit, columns = [f"ic{i+1}" for i in range(len(ica_cols))])], axis = 1)
+		if full_df_pca is None:
+			if pca_scaler_fit is not None:
+				df_pca_trans = pca_scaler_fit.transform(df[rankscore_cols])
+			df_pca_fit = pca_fit.transform(df_pca_trans)
+			df = pd.concat([df, pd.DataFrame(data = df_pca_fit, columns = [f"pc{i+1}" for i in range(pca_n)])], axis = 1)
+		else:
+			df = pd.merge(df, full_df_pca, on='#Uploaded_variation', how='left')
+		df.to_parquet(o, engine="pyarrow", index=False)
+		#os.remove(p)
+		logger.info(f"  ({i}/{len(chunk_paths)}) {os.path.basename(p)} -> {os.path.basename(o)}")
+		chunk_paths_out.append(o)
+	return chunk_paths_out
+
+@resource_tracker(logger)
+def calculate_ica_scores(chunk_paths, ica_fit, ica_cols, full_df_ica = None):
+	chunk_paths_out = []
+	i = 0
+	for p in chunk_paths:
+		i = i + 1
+		o = p.replace(".parquet",".ica.parquet")
+		df = pd.read_parquet(p)
+		if full_df_ica is None:
+			df_ica_fit = ica_fit.transform(df[ica_cols])
+			df = pd.concat([df, pd.DataFrame(data = df_ica_fit, columns = [f"ic{i+1}" for i in range(len(ica_cols))])], axis = 1)
+		else:
+			df = pd.merge(df, full_df_ica, on='#Uploaded_variation', how='left')
 		df.to_parquet(o, engine="pyarrow", index=False)
 		#os.remove(p)
 		logger.info(f"  ({i}/{len(chunk_paths)}) {os.path.basename(p)} -> {os.path.basename(o)}")
@@ -274,7 +292,7 @@ def merge_annot_scores(chunk_paths):
 	i = 0
 	for p in chunk_paths:
 		i = i + 1
-		q = p.replace(".parquet",".missense.imputed.scores.predictions.parquet")
+		q = p.replace(".parquet",".missense.imputed.pca.ica.predictions.parquet")
 		o = p.replace(".parquet",".scored.parquet")
 		df = pd.read_parquet(p)
 		df_scores = pd.read_parquet(q)
