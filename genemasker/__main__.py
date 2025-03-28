@@ -121,7 +121,7 @@ def main(args=None):
 				del full_df
 		
 			logger.info("Imputing annotation file")
-			chunk_paths_imp = fxns.impute_annotation_file(chunk_paths = chunk_missense_paths_orig, iter_imp = iter_imputer_fit, rankscore_cols = rankscore_cols_keep, scaler_fit = scaler_fit)
+			chunk_paths_imp, rankscore_cols_keep_imputed = fxns.impute_annotation_file(chunk_paths = chunk_missense_paths_orig, iter_imp = iter_imputer_fit, rankscore_cols = rankscore_cols_keep, scaler_fit = scaler_fit)
 			ddf = dd.read_parquet(chunk_paths_imp)
 			logger.info(f"""Average partition size of imputed annot file: {avg_chunk_size(chunk_paths_imp)}""")
 
@@ -129,16 +129,16 @@ def main(args=None):
 			if args.pca_standardized:
 				logger.info("Fitting standard scaler on imputed rankscores for pca")
 				imputed_scaler = StandardScaler()
-				imputed_scaler_fit = imputed_scaler.fit(ddf[rankscore_cols_keep].compute())
+				imputed_scaler_fit = imputed_scaler.fit(ddf[rankscore_cols_keep_imputed].compute())
 
 			pca_fit = None
 			full_df_pca = None
 			if args.pca_fit_method == 'incremental':
-				logger.info(f"Fitting model for incremental PCA on columns {rankscore_cols_keep}")
-				pca_fit = fxns.fit_incremental_pca(chunk_paths_imp, rankscore_cols_keep, scaler_fit = imputed_scaler_fit)
+				logger.info(f"Fitting model for incremental PCA on columns {rankscore_cols_keep_imputed}")
+				pca_fit = fxns.fit_incremental_pca(chunk_paths_imp, rankscore_cols_keep_imputed, scaler_fit = imputed_scaler_fit)
 
 			else:
-				pca = PCA(n_components = len(rankscore_cols_keep))
+				pca = PCA(n_components = len(rankscore_cols_keep_imputed))
 				if args.pca_training_frac:
 					logger.info("Selecting random variants for use in PCA training data")
 					random.seed(456)
@@ -147,31 +147,31 @@ def main(args=None):
 					random_ids = random.sample(variant_ids, math.ceil(valid_rows * args.pca_training_frac))
 					logger.info(f"Setting number of variants for PCA training data to {math.ceil(valid_rows * args.pca_training_frac)}")
 				
-					logger.info(f"Extracting PCA training data from imputed rankscores for columns {rankscore_cols_keep}")
-					training_df = fxns.filter_annotation_file(chunk_paths_imp, ["#Uploaded_variation"] + rankscore_cols_keep, random_ids)
+					logger.info(f"Extracting PCA training data from imputed rankscores for columns {rankscore_cols_keep_imputed}")
+					training_df = fxns.filter_annotation_file(chunk_paths_imp, ["#Uploaded_variation"] + rankscore_cols_keep_imputed, random_ids)
 					logger.info(f"ICA training data contains {training_df.shape[0]} variants")
 					if args.pca_standardized:
 						logger.info(f"Centering and scaling training data for pca")
-						training_df[rankscore_cols_keep] = imputed_scaler_fit.transform(training_df[rankscore_cols_keep])
+						training_df[rankscore_cols_keep_imputed] = imputed_scaler_fit.transform(training_df[rankscore_cols_keep_imputed])
 	
-					logger.info(f"Fitting model for PCA on columns {rankscore_cols_keep}")
-					pca_fit = pca.fit(training_df[rankscore_cols_keep])
+					logger.info(f"Fitting model for PCA on columns {rankscore_cols_keep_imputed}")
+					pca_fit = pca.fit(training_df[rankscore_cols_keep_imputed])
 
 					logger.info("Deleting PCA training data")
 					del training_df
 
 				else:
-					logger.info(f"Extracting PCA full data from imputed rankscores for columns {rankscore_cols_keep}")
-					full_df = ddf[["#Uploaded_variation"] + rankscore_cols_keep].compute()
+					logger.info(f"Extracting PCA full data from imputed rankscores for columns {rankscore_cols_keep_imputed}")
+					full_df = ddf[["#Uploaded_variation"] + rankscore_cols_keep_imputed].compute()
 					logger.info(f"PCA full data contains {full_df.shape[0]} variants")
 					if args.pca_standardized:
 						logger.info(f"Centering and scaling training data for pca")
-						full_df[rankscore_cols_keep] = imputed_scaler_fit.transform(full_df[rankscore_cols_keep])
+						full_df[rankscore_cols_keep_imputed] = imputed_scaler_fit.transform(full_df[rankscore_cols_keep_imputed])
 
-					logger.info(f"Fitting model for PCA on columns {rankscore_cols_keep}")
-					pca_fit = pca.fit(full_df[rankscore_cols_keep])
-					full_df_pca = pca_fit.transform(full_df[rankscore_cols_keep])
-					full_df_pca = pd.DataFrame(data = pca.fit_transform(full_df[rankscore_cols_keep]), columns = [f"pc{i+1}" for i in range(len(rankscore_cols_keep))])
+					logger.info(f"Fitting model for PCA on columns {rankscore_cols_keep_imputed}")
+					pca_fit = pca.fit(full_df[rankscore_cols_keep_imputed])
+					full_df_pca = pca_fit.transform(full_df[rankscore_cols_keep_imputed])
+					full_df_pca = pd.DataFrame(data = pca.fit_transform(full_df[rankscore_cols_keep_imputed]), columns = [f"pc{i+1}" for i in range(len(rankscore_cols_keep_imputed))])
 					full_df_pca['#Uploaded_variation'] = full_df['#Uploaded_variation'].to_list()
 
 					logger.info("Deleting PCA full data")
@@ -182,12 +182,13 @@ def main(args=None):
 			logger.info(f"PCA explained variance written to {args.out}.pca_explained_variance.tsv")
 			
 			logger.info("Calculating pca scores")
-			chunk_paths_pca = fxns.calculate_pca_scores(chunk_paths = chunk_paths_imp, pca_fit = pca_fit, full_df_pca = full_df_pca, pca_n = len(rankscore_cols_keep), rankscore_cols = rankscore_cols_keep, pca_scaler_fit = imputed_scaler_fit)
+			chunk_paths_pca = fxns.calculate_pca_scores(chunk_paths = chunk_paths_imp, pca_fit = pca_fit, full_df_pca = full_df_pca, pca_n = len(rankscore_cols_keep_imputed), rankscore_cols = rankscore_cols_keep_imputed, pca_scaler_fit = imputed_scaler_fit)
 			ddf = dd.read_parquet(chunk_paths_pca)
 			logger.info(f"""Average partition size of imputed missense annot file with pca scores: {avg_chunk_size(chunk_paths_pca)}""")
 
 			fast_ica = FastICA(n_components=None, random_state=0, max_iter=5000, whiten='unit-variance', whiten_solver='eigh')
 			ica_cols_keep = [col for col in rankscore_cols_keep if col not in ['Eigen-PC-raw_coding_rankscore', 'Eigen-raw_coding_rankscore', 'Polyphen2_HVAR_rankscore', 'CADD_raw_rankscore_hg19', 'BayesDel_noAF_rankscore']]
+			ica_cols_keep_imputed = [x + "_imputed" for x in ica_cols_keep]
 
 			fast_ica_fit = None
 			full_df_ica = None
@@ -199,46 +200,46 @@ def main(args=None):
 				random_ids = random.sample(variant_ids, math.ceil(valid_rows * args.ica_training_frac))
 				logger.info(f"Setting number of variants for ICA training data to {math.ceil(valid_rows * args.ica_training_frac)}")
 			
-				logger.info(f"Extracting ICA training data from imputed rankscores for columns {ica_cols_keep}")
-				training_df = fxns.filter_annotation_file(chunk_paths_imp, ["#Uploaded_variation"] + ica_cols_keep, random_ids)
+				logger.info(f"Extracting ICA training data from imputed rankscores for columns {ica_cols_keep_imputed}")
+				training_df = fxns.filter_annotation_file(chunk_paths_imp, ["#Uploaded_variation"] + ica_cols_keep_imputed, random_ids)
 				logger.info(f"ICA training data contains {training_df.shape[0]} variants")
 
-				logger.info(f"Fitting model for ICA on columns {ica_cols_keep}")
-				fast_ica_fit = fast_ica.fit(training_df[ica_cols_keep])
+				logger.info(f"Fitting model for ICA on columns {ica_cols_keep_imputed}")
+				fast_ica_fit = fast_ica.fit(training_df[ica_cols_keep_imputed])
 			
 				logger.info("Deleting ICA training data")
 				del training_df
 
 			else:
-				logger.info(f"Extracting ICA full data from imputed rankscores for columns {ica_cols_keep}")
-				full_df = ddf[["#Uploaded_variation"] + ica_cols_keep].compute()
+				logger.info(f"Extracting ICA full data from imputed rankscores for columns {ica_cols_keep_imputed}")
+				full_df = ddf[["#Uploaded_variation"] + ica_cols_keep_imputed].compute()
 				logger.info(f"ICA full data contains {full_df.shape[0]} variants")
 
-				logger.info(f"Fitting model for ICA on columns {ica_cols_keep} and transforming full data")
-				full_df_ica = pd.DataFrame(data = fast_ica.fit_transform(full_df[ica_cols_keep]), columns = [f"ic{i+1}" for i in range(len(ica_cols_keep))])
+				logger.info(f"Fitting model for ICA on columns {ica_cols_keep_imputed} and transforming full data")
+				full_df_ica = pd.DataFrame(data = fast_ica.fit_transform(full_df[ica_cols_keep_imputed]), columns = [f"ic{i+1}" for i in range(len(ica_cols_keep_imputed))])
 				full_df_ica['#Uploaded_variation'] = full_df['#Uploaded_variation'].to_list()
 			
 				logger.info("Deleting ICA full data")
 				del full_df
 			
 			logger.info("Calculating ica scores")
-			chunk_paths_ica = fxns.calculate_ica_scores(chunk_paths = chunk_paths_pca, ica_fit = fast_ica_fit, ica_cols = ica_cols_keep, full_df_ica = full_df_ica)
+			chunk_paths_ica = fxns.calculate_ica_scores(chunk_paths = chunk_paths_pca, ica_fit = fast_ica_fit, ica_cols = ica_cols_keep_imputed, full_df_ica = full_df_ica)
 			ddf = dd.read_parquet(chunk_paths_ica)
 			logger.info(f"""Average partition size of imputed missense annot file with ica scores: {avg_chunk_size(chunk_paths_ica)}""")
 		
 			logger.info("Calculating Rankscore ~ MAF correlations")
-			correlations = fxns.calculate_correlations(ddf, rankscore_cols_keep, 'MAF')
+			correlations = fxns.calculate_correlations(ddf, rankscore_cols_keep_imputed, 'MAF')
 			correlations.to_csv(f"{args.out}.rankscore_maf_corr.tsv", sep='\t', index=False)
 			logger.info(f"Rankscore ~ MAF correlations written to {args.out}.rankscore_maf_corr.tsv")
 		
 			logger.info("Calculating PC ~ MAF correlations")
 			print(list(ddf.columns))
-			pc_correlations = fxns.calculate_correlations(ddf, [f"pc{i+1}" for i in range(len(rankscore_cols_keep))], 'MAF')
+			pc_correlations = fxns.calculate_correlations(ddf, [f"pc{i+1}" for i in range(len(rankscore_cols_keep_imputed))], 'MAF')
 			pc_correlations.to_csv(f"{args.out}.pc_maf_corr.tsv", sep='\t', index=False)
 			logger.info(f"PC ~ MAF correlations written to {args.out}.pc_maf_corr.tsv")
 		
 			logger.info("Calculating IC ~ MAF correlations")
-			ic_correlations = fxns.calculate_correlations(ddf, [f"ic{i+1}" for i in range(len(ica_cols_keep))], 'MAF')
+			ic_correlations = fxns.calculate_correlations(ddf, [f"ic{i+1}" for i in range(len(ica_cols_keep_imputed))], 'MAF')
 			ic_correlations.to_csv(f"{args.out}.ic_maf_corr.tsv", sep='\t', index=False)
 			logger.info(f"IC ~ MAF correlations written to {args.out}.ic_maf_corr.tsv")
 		

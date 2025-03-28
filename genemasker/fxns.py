@@ -60,10 +60,7 @@ def process_annotation_file(annot, cols, maf, out_dir, chunk_size=None, n_partit
 		chunk['REVEL_score_max'] = chunk['REVEL_score'].apply(lambda x: get_max(x))
 		chunk = chunk.merge(maf.loc[maf['#Uploaded_variation'].isin(chunk['#Uploaded_variation'])], on="#Uploaded_variation", how="left")
 		stored_variant_count = stored_variant_count + chunk.shape[0]
-		#dd_chunk = dd.from_pandas(chunk, npartitions=n_partitions)
-		#dd.to_parquet(dd_chunk, f"{out_dir}/chunk{chunk_count}", write_metadata_file=True, name_function = lambda n: f"{os.path.basename(annot)}-{chunk_count}-{n}.parquet")
 		chunk.to_parquet(f"{out_dir}/{os.path.basename(annot)}-{chunk_count}.parquet", index=False)
-		#chunk_paths.extend(glob.glob(f"{out_dir}/chunk{chunk_count}/*.parquet"))
 		chunk_paths.append(f"{out_dir}/{os.path.basename(annot)}-{chunk_count}.parquet")
 		chunk = chunk[chunk['Consequence'].str.contains("missense_variant", na=False)]
 		chunk = chunk[["#Uploaded_variation","MAF"] + rankscore_cols]
@@ -94,6 +91,7 @@ def filter_annotation_file(chunk_paths, cols, ids):
 def impute_annotation_file(chunk_paths, iter_imp, rankscore_cols, scaler_fit = None):
 	chunk_paths_out = []
 	i = 0
+	rankscore_cols_imputed = [x + "_imputed" for x in rankscore_cols]
 	for p in chunk_paths:
 		i = i + 1
 		o = p.replace(".parquet",".imputed.parquet")
@@ -101,14 +99,14 @@ def impute_annotation_file(chunk_paths, iter_imp, rankscore_cols, scaler_fit = N
 		if scaler_fit is not None:
 			df_center_scale = scaler_fit.transform(df[rankscore_cols])
 			df_center_scale = iter_imp.transform(df_center_scale)
-			df[rankscore_cols] = scaler_fit.inverse_transform(df_center_scale)
+			df[rankscore_cols_imputed] = scaler_fit.inverse_transform(df_center_scale)
 		else:
-			df[rankscore_cols] = iter_imp.transform(df[rankscore_cols])
+			df[rankscore_cols_imputed] = iter_imp.transform(df[rankscore_cols])
 		df.to_parquet(o, engine="pyarrow", index=False)
-		#os.remove(p)
+		os.remove(p)
 		logger.info(f"  ({i}/{len(chunk_paths)}) {os.path.basename(p)} -> {os.path.basename(o)}")
 		chunk_paths_out.append(o)
-	return chunk_paths_out
+	return chunk_paths_out, rankscore_cols_imputed
 
 @resource_tracker(logger)
 def fit_incremental_pca(chunk_paths, rankscore_cols, scaler_fit = None):
@@ -139,7 +137,7 @@ def calculate_pca_scores(chunk_paths, pca_n, rankscore_cols, pca_fit = None, ful
 		else:
 			df = pd.merge(df, full_df_pca, on='#Uploaded_variation', how='left')
 		df.to_parquet(o, engine="pyarrow", index=False)
-		#os.remove(p)
+		os.remove(p)
 		logger.info(f"  ({i}/{len(chunk_paths)}) {os.path.basename(p)} -> {os.path.basename(o)}")
 		chunk_paths_out.append(o)
 	return chunk_paths_out
@@ -158,7 +156,7 @@ def calculate_ica_scores(chunk_paths, ica_fit, ica_cols, full_df_ica = None):
 		else:
 			df = pd.merge(df, full_df_ica, on='#Uploaded_variation', how='left')
 		df.to_parquet(o, engine="pyarrow", index=False)
-		#os.remove(p)
+		os.remove(p)
 		logger.info(f"  ({i}/{len(chunk_paths)}) {os.path.basename(p)} -> {os.path.basename(o)}")
 		chunk_paths_out.append(o)
 	return chunk_paths_out
@@ -209,8 +207,11 @@ def damaging_pred(row):
 
 @resource_tracker(logger)
 def get_damaging_pred_og(df):
-	cols_drop=['#Uploaded_variation','Eigen-PC-raw_coding_rankscore', 'Eigen-raw_coding_rankscore', 'Polyphen2_HVAR_rankscore', 'CADD_raw_rankscore_hg19', 'BayesDel_noAF_rankscore', 'MutPred_rankscore', 'LINSIGHT_rankscore']
-	score = (df[[c for c in df.columns if c not in cols_drop]] > 0.67).mean(axis=1, numeric_only=True)
+	cols_drop=['Eigen-PC-raw_coding_rankscore', 'Eigen-raw_coding_rankscore', 'Polyphen2_HVAR_rankscore', 'CADD_raw_rankscore_hg19', 'BayesDel_noAF_rankscore', 'MutPred_rankscore']
+	df = df.drop(columns = cols_drop)
+	for col in list(df.columns):
+		df[col + "_dmgpred"] = df[col].apply(damaging_pred)
+	score = df[[x for x in list(df.columns) if x.endswith('_dmgpred')]].mean(axis=1, numeric_only=True)
 	return score
 
 @resource_tracker(logger)
@@ -226,12 +227,13 @@ def get_damaging_pred_ica(df, ic_corr):
 			df.loc[:,col] = df[col]*ic_corr.loc[ic_corr['Feature']==col]['Dir'].iloc[0]
 	df_rankscore = df.rank(method="min", ascending=True, pct=True)
 	df_rankscore.columns = [f'{col}_rankscore' for col in list(df_rankscore.columns)]
-	score = (df_rankscore > 0.67).mean(axis=1, numeric_only=True)
+	for col in list(df_rankscore.columns):
+		df_rankscore[col + "_dmgpred"] = df_rankscore[col].apply(damaging_pred)
+	score = df_rankscore[[x for x in list(df_rankscore.columns) if x.endswith('_dmgpred')]].mean(axis=1, numeric_only=True)
 	return score
 
 @resource_tracker(logger)
 def get_damaging_pred_pca(df, pc_corr, pc_weight):
-	#df = df.copy()
 	pc_corr['Dir'] = np.nan
 	pc_corr.loc[pc_corr['Pearsonr']>0, 'Dir'] = -1
 	pc_corr.loc[pc_corr['Pearsonr']<0, 'Dir'] = 1
@@ -253,9 +255,9 @@ def get_damaging_pred_pca(df, pc_corr, pc_weight):
 	pc_weight['PC'] = [f'pc{i+1}' for i in range(len(pc_weight))]
 	pc_weight.loc[pc_weight['PC'].isin(pc_to_drop),'VarianceExplained'] = np.nan
 	pc_weight = pc_weight.dropna()
-	pc_weight['PC'] = pc_weight['PC'] + "_rankscore"
 	sum_weight = pc_weight['VarianceExplained'].sum()
 	pc_weight['VarianceExplained'] = pc_weight['VarianceExplained']/sum_weight
+	pc_weight['PC'] = pc_weight['PC'] + "_rankscore"
 	pc_weight = pc_weight.set_index('PC',drop=True)
 	weighted_scores = df_rankscore * pc_weight['VarianceExplained']
 	return weighted_scores.sum(axis=1)
@@ -271,6 +273,15 @@ def get_damaging_pred_all(ddf):
 
 @resource_tracker(logger)
 def calculate_damage_predictions(chunk_paths, rankscore_cols, ica_cols, pca_n, pc_corr, pca_exp_var, ic_corr):
+	ddf = dd.read_parquet(chunk_paths)
+	df_pcs = ddf[['#Uploaded_variation'] + [f"pc{i+1}" for i in range(pca_n)]].compute()
+	df_pcs['Combo_mean_score_pc'] = get_damaging_pred_pca(df_pcs[[f"pc{i+1}" for i in range(pca_n)]], pc_corr, pca_exp_var)
+	df_score_pc = df_pcs[['#Uploaded_variation','Combo_mean_score_pc']]
+	del df_pcs
+	df_ics = ddf[['#Uploaded_variation'] + [f"ic{i+1}" for i in range(len(ica_cols))]].compute()
+	df_ics['Combo_mean_score_ic'] = get_damaging_pred_ica(df_ics[[f"ic{i+1}" for i in range(len(ica_cols))]], ic_corr)
+	df_score_ic = df_ics[['#Uploaded_variation','Combo_mean_score_ic']]
+	del df_ics
 	chunk_paths_out = []
 	i = 0
 	for p in chunk_paths:
@@ -278,10 +289,10 @@ def calculate_damage_predictions(chunk_paths, rankscore_cols, ica_cols, pca_n, p
 		o = p.replace(".parquet",".predictions.parquet")
 		df = pd.read_parquet(p)
 		df['Combo_mean_score_og'] = get_damaging_pred_og(df[rankscore_cols])
-		df['Combo_mean_score_pc'] = get_damaging_pred_pca(df[[f"pc{i+1}" for i in range(pca_n)]], pc_corr, pca_exp_var)
-		df['Combo_mean_score_ic'] = get_damaging_pred_ica(df[[f"ic{i+1}" for i in range(len(ica_cols))]], ic_corr)
+		df = pd.merge(df, df_score_pc, on='#Uploaded_variation', how='left')
+		df = pd.merge(df, df_score_ic, on='#Uploaded_variation', how='left')
 		df.to_parquet(o, engine="pyarrow", index=False)
-		#os.remove(p)
+		os.remove(p)
 		logger.info(f"  ({i}/{len(chunk_paths)}) {os.path.basename(p)} -> {os.path.basename(o)}")
 		chunk_paths_out.append(o)
 	return chunk_paths_out
