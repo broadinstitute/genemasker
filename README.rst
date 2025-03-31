@@ -17,20 +17,28 @@ This application has been tested using the following version of Python and requi
 
 It can be installed in a conda environment via the provided yml file as below.
 
-   >>> conda env create -f env/environment.yml
-   >>> source activate genemasker
+.. code-block:: bash
+
+   conda env create -f env/environment.yml
+   source activate genemasker
 
 With your environment activated, you are ready to install genemasker.
 
-   >>> python setup.py install
+.. code-block:: bash
+
+   python setup.py install
 
 Another option is to run genemasker via Docker (see the included Dockerfile).
 
 Getting Started
 ***************
 
-   >>> source activate genemasker
+.. code-block:: bash
+
+   source activate genemasker
 
 Verify that genemasker is functional using the following command to display help.
 
-   >>> genemasker --help
+.. code-block:: bash
+
+   genemasker --help

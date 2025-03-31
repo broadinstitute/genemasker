@@ -102,8 +102,8 @@ def impute_annotation_file(chunk_paths, iter_imp, rankscore_cols, scaler_fit = N
 			df[rankscore_cols_imputed] = scaler_fit.inverse_transform(df_center_scale)
 		else:
 			df[rankscore_cols_imputed] = iter_imp.transform(df[rankscore_cols])
-		df.to_parquet(o, engine="pyarrow", index=False)
-		os.remove(p)
+		df.to_parquet(o, index=False)
+		#os.remove(p)
 		logger.info(f"  ({i}/{len(chunk_paths)}) {os.path.basename(p)} -> {os.path.basename(o)}")
 		chunk_paths_out.append(o)
 	return chunk_paths_out, rankscore_cols_imputed
@@ -136,8 +136,8 @@ def calculate_pca_scores(chunk_paths, pca_n, rankscore_cols, pca_fit = None, ful
 			df = pd.concat([df, pd.DataFrame(data = df_pca_fit, columns = [f"pc{i+1}" for i in range(pca_n)])], axis = 1)
 		else:
 			df = pd.merge(df, full_df_pca, on='#Uploaded_variation', how='left')
-		df.to_parquet(o, engine="pyarrow", index=False)
-		os.remove(p)
+		df.to_parquet(o, index=False)
+		#os.remove(p)
 		logger.info(f"  ({i}/{len(chunk_paths)}) {os.path.basename(p)} -> {os.path.basename(o)}")
 		chunk_paths_out.append(o)
 	return chunk_paths_out
@@ -155,8 +155,8 @@ def calculate_ica_scores(chunk_paths, ica_fit, ica_cols, full_df_ica = None):
 			df = pd.concat([df, pd.DataFrame(data = df_ica_fit, columns = [f"ic{i+1}" for i in range(len(ica_cols))])], axis = 1)
 		else:
 			df = pd.merge(df, full_df_ica, on='#Uploaded_variation', how='left')
-		df.to_parquet(o, engine="pyarrow", index=False)
-		os.remove(p)
+		df.to_parquet(o, index=False)
+		#os.remove(p)
 		logger.info(f"  ({i}/{len(chunk_paths)}) {os.path.basename(p)} -> {os.path.basename(o)}")
 		chunk_paths_out.append(o)
 	return chunk_paths_out
@@ -291,8 +291,8 @@ def calculate_damage_predictions(chunk_paths, rankscore_cols, ica_cols, pca_n, p
 		df['Combo_mean_score_og'] = get_damaging_pred_og(df[rankscore_cols])
 		df = pd.merge(df, df_score_pc, on='#Uploaded_variation', how='left')
 		df = pd.merge(df, df_score_ic, on='#Uploaded_variation', how='left')
-		df.to_parquet(o, engine="pyarrow", index=False)
-		os.remove(p)
+		df.to_parquet(o, index=False)
+		#os.remove(p)
 		logger.info(f"  ({i}/{len(chunk_paths)}) {os.path.basename(p)} -> {os.path.basename(o)}")
 		chunk_paths_out.append(o)
 	return chunk_paths_out
@@ -308,7 +308,7 @@ def merge_annot_scores(chunk_paths):
 		df = pd.read_parquet(p)
 		df_scores = pd.read_parquet(q)
 		df = df.merge(df_scores[["#Uploaded_variation","Combo_mean_score_og","Combo_mean_score_pc","Combo_mean_score_ic"]], on="#Uploaded_variation", how="left")
-		df.to_parquet(o, engine="pyarrow", index=False)
+		df.to_parquet(o, index=False)
 		chunk_paths_out.append(o)
 	return chunk_paths_out
 
@@ -343,8 +343,8 @@ def calculate_mask_filters(chunk_paths):
 		df['x36327219_m3'] = filters.x36327219_m3(df)
 		df['x36411364_m4_0_001'] = filters.x36411364_m4_0_001(df)
 		df['x37348876_m8'] = filters.x37348876_m8(df)
-		df.to_parquet(o, engine="pyarrow", index=False)
-		#os.remove(p)
+		df.to_parquet(o, index=False)
+		##os.remove(p)
 		logger.info(f"  ({i}/{len(chunk_paths)}) {os.path.basename(p)} -> {os.path.basename(o)}")
 		chunk_paths_out.append(o)
 	return chunk_paths_out
