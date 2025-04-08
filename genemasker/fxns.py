@@ -88,7 +88,7 @@ def filter_annotation_file(chunk_paths, cols, ids):
 	return pd.concat(fdfs, sort=False, ignore_index=True) if fdfs else pd.DataFrame()
 
 @resource_tracker(logger)
-def impute_annotation_file(chunk_paths, iter_imp, rankscore_cols, scaler_fit = None):
+def impute_annotation_file(chunk_paths, iter_imp, rankscore_cols, scaler_fit = None, save_all = False):
 	chunk_paths_out = []
 	i = 0
 	rankscore_cols_imputed = [x + "_imputed" for x in rankscore_cols]
@@ -103,7 +103,8 @@ def impute_annotation_file(chunk_paths, iter_imp, rankscore_cols, scaler_fit = N
 		else:
 			df[rankscore_cols_imputed] = iter_imp.transform(df[rankscore_cols])
 		df.to_parquet(o, index=False)
-		#os.remove(p)
+		if not save_all:
+			os.remove(p)
 		logger.info(f"  ({i}/{len(chunk_paths)}) {os.path.basename(p)} -> {os.path.basename(o)}")
 		chunk_paths_out.append(o)
 	return chunk_paths_out, rankscore_cols_imputed
@@ -122,7 +123,7 @@ def fit_incremental_pca(chunk_paths, rankscore_cols, scaler_fit = None):
 	return pca
 
 @resource_tracker(logger)
-def calculate_pca_scores(chunk_paths, pca_n, rankscore_cols, pca_fit = None, full_df_pca = None, pca_scaler_fit = None):
+def calculate_pca_scores(chunk_paths, pca_n, rankscore_cols, pca_fit = None, full_df_pca = None, pca_scaler_fit = None, save_all = False):
 	chunk_paths_out = []
 	i = 0
 	for p in chunk_paths:
@@ -137,13 +138,14 @@ def calculate_pca_scores(chunk_paths, pca_n, rankscore_cols, pca_fit = None, ful
 		else:
 			df = pd.merge(df, full_df_pca, on='#Uploaded_variation', how='left')
 		df.to_parquet(o, index=False)
-		#os.remove(p)
+		if not save_all:
+			os.remove(p)
 		logger.info(f"  ({i}/{len(chunk_paths)}) {os.path.basename(p)} -> {os.path.basename(o)}")
 		chunk_paths_out.append(o)
 	return chunk_paths_out
 
 @resource_tracker(logger)
-def calculate_ica_scores(chunk_paths, ica_fit, ica_cols, full_df_ica = None):
+def calculate_ica_scores(chunk_paths, ica_fit, ica_cols, full_df_ica = None, save_all = False):
 	chunk_paths_out = []
 	i = 0
 	for p in chunk_paths:
@@ -156,7 +158,8 @@ def calculate_ica_scores(chunk_paths, ica_fit, ica_cols, full_df_ica = None):
 		else:
 			df = pd.merge(df, full_df_ica, on='#Uploaded_variation', how='left')
 		df.to_parquet(o, index=False)
-		#os.remove(p)
+		if not save_all:
+			os.remove(p)
 		logger.info(f"  ({i}/{len(chunk_paths)}) {os.path.basename(p)} -> {os.path.basename(o)}")
 		chunk_paths_out.append(o)
 	return chunk_paths_out
@@ -272,7 +275,7 @@ def get_damaging_pred_all(ddf):
 	return results
 
 @resource_tracker(logger)
-def calculate_damage_predictions(chunk_paths, rankscore_cols, ica_cols, pca_n, pc_corr, pca_exp_var, ic_corr):
+def calculate_damage_predictions(chunk_paths, rankscore_cols, ica_cols, pca_n, pc_corr, pca_exp_var, ic_corr, save_all = False):
 	ddf = dd.read_parquet(chunk_paths)
 	df_pcs = ddf[['#Uploaded_variation'] + [f"pc{i+1}" for i in range(pca_n)]].compute()
 	df_pcs['Combo_mean_score_pc'] = get_damaging_pred_pca(df_pcs[[f"pc{i+1}" for i in range(pca_n)]], pc_corr, pca_exp_var)
@@ -292,7 +295,8 @@ def calculate_damage_predictions(chunk_paths, rankscore_cols, ica_cols, pca_n, p
 		df = pd.merge(df, df_score_pc, on='#Uploaded_variation', how='left')
 		df = pd.merge(df, df_score_ic, on='#Uploaded_variation', how='left')
 		df.to_parquet(o, index=False)
-		#os.remove(p)
+		if not save_all:
+			os.remove(p)
 		logger.info(f"  ({i}/{len(chunk_paths)}) {os.path.basename(p)} -> {os.path.basename(o)}")
 		chunk_paths_out.append(o)
 	return chunk_paths_out
@@ -313,7 +317,7 @@ def merge_annot_scores(chunk_paths):
 	return chunk_paths_out
 
 @resource_tracker(logger)
-def calculate_mask_filters(chunk_paths):
+def calculate_mask_filters(chunk_paths, ignore_mask_maf = False, save_all = False):
 	chunk_paths_out = []
 	i = 0
 	for p in chunk_paths:
@@ -322,29 +326,30 @@ def calculate_mask_filters(chunk_paths):
 		df = pd.read_parquet(p)
 		df['new_damaging_ic25'] = filters.new_damaging_ic25(df)
 		df['new_damaging_og25'] = filters.new_damaging_og25(df)
-		df['new_damaging_og25_0_01'] = filters.new_damaging_og25_0_01(df)
+		df['new_damaging_og25_0_01'] = filters.new_damaging_og25_0_01(df, ignore_mask_maf)
 		df['new_damaging_og50'] = filters.new_damaging_og50(df)
-		df['new_damaging_og50_0_01'] = filters.new_damaging_og50_0_01(df)
+		df['new_damaging_og50_0_01'] = filters.new_damaging_og50_0_01(df, ignore_mask_maf)
 		df['x23633568_m1'] = filters.x23633568_m1(df)
-		df['x24507775_m6_0_01'] = filters.x24507775_m6_0_01(df)
-		df['x29177435_m1'] = filters.x29177435_m1(df)
-		df['x29378355_m1_0_01'] = filters.x29378355_m1_0_01(df)
-		df['x30269813_m4'] = filters.x30269813_m4(df)
-		df['x30828346_m1'] = filters.x30828346_m1(df)
-		df['x31118516_m5_0_001'] = filters.x31118516_m5_0_001(df)
-		df['x31383942_m10'] = filters.x31383942_m10(df)
-		df['x31383942_m4'] = filters.x31383942_m4(df)
+		df['x24507775_m6_0_01'] = filters.x24507775_m6_0_01(df, ignore_mask_maf)
+		df['x29177435_m1'] = filters.x29177435_m1(df, ignore_mask_maf)
+		df['x29378355_m1_0_01'] = filters.x29378355_m1_0_01(df, ignore_mask_maf)
+		df['x30269813_m4'] = filters.x30269813_m4(df, ignore_mask_maf)
+		df['x30828346_m1'] = filters.x30828346_m1(df, ignore_mask_maf)
+		df['x31118516_m5_0_001'] = filters.x31118516_m5_0_001(df, ignore_mask_maf)
+		df['x31383942_m10'] = filters.x31383942_m10(df, ignore_mask_maf)
+		df['x31383942_m4'] = filters.x31383942_m4(df, ignore_mask_maf)
 		df['x32141622_m4'] = filters.x32141622_m4(df)
 		df['x32141622_m7'] = filters.x32141622_m7(df)
-		df['x32141622_m7_0_01'] = filters.x32141622_m7_0_01(df)
-		df['x32853339_m1'] = filters.x32853339_m1(df)
-		df['x34183866_m1'] = filters.x34183866_m1(df)
-		df['x34216101_m3_0_001'] = filters.x34216101_m3_0_001(df)
-		df['x36327219_m3'] = filters.x36327219_m3(df)
-		df['x36411364_m4_0_001'] = filters.x36411364_m4_0_001(df)
-		df['x37348876_m8'] = filters.x37348876_m8(df)
+		df['x32141622_m7_0_01'] = filters.x32141622_m7_0_01(df, ignore_mask_maf)
+		df['x32853339_m1'] = filters.x32853339_m1(df, ignore_mask_maf)
+		df['x34183866_m1'] = filters.x34183866_m1(df, ignore_mask_maf)
+		df['x34216101_m3_0_001'] = filters.x34216101_m3_0_001(df, ignore_mask_maf)
+		df['x36327219_m3'] = filters.x36327219_m3(df, ignore_mask_maf)
+		df['x36411364_m4_0_001'] = filters.x36411364_m4_0_001(df, ignore_mask_maf)
+		df['x37348876_m8'] = filters.x37348876_m8(df, ignore_mask_maf)
 		df.to_parquet(o, index=False)
-		##os.remove(p)
+		if not save_all:
+			os.remove(p)
 		logger.info(f"  ({i}/{len(chunk_paths)}) {os.path.basename(p)} -> {os.path.basename(o)}")
 		chunk_paths_out.append(o)
 	return chunk_paths_out

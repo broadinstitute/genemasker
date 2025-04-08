@@ -82,7 +82,7 @@ def main(args=None):
 			variant_ids_somemiss = list(ddf[ddf['__non_miss_rankscore_keep__'] != len(rankscore_cols_keep)]['#Uploaded_variation'].compute())
 			logger.info(f"Found {len(variant_ids_somemiss)} variants with some missing rankscores")
 
-			iter_imputer = IterativeImputer(min_value=0, max_value=1, random_state=1398, max_iter=30, verbose=2)
+			iter_imputer = IterativeImputer(min_value=0, max_value=1, random_state=1398, max_iter=30, verbose=2, tol=args.impute_tol)
 
 			if args.impute_training_frac:
 				logger.info("Selecting random variants for imputer training data")
@@ -121,7 +121,7 @@ def main(args=None):
 				del full_df
 
 			logger.info("Imputing annotation file")
-			chunk_paths_imp, rankscore_cols_keep_imputed = fxns.impute_annotation_file(chunk_paths = chunk_missense_paths_orig, iter_imp = iter_imputer_fit, rankscore_cols = rankscore_cols_keep, scaler_fit = scaler_fit)
+			chunk_paths_imp, rankscore_cols_keep_imputed = fxns.impute_annotation_file(chunk_paths = chunk_missense_paths_orig, iter_imp = iter_imputer_fit, rankscore_cols = rankscore_cols_keep, scaler_fit = scaler_fit, save_all = args.save_all)
 			ddf = dd.read_parquet(chunk_paths_imp)
 			logger.info(f"""Average partition size of imputed annot file: {avg_chunk_size(chunk_paths_imp)}""")
 
@@ -181,7 +181,7 @@ def main(args=None):
 			logger.info(f"PCA explained variance written to {args.out}.pca_explained_variance.tsv")
 
 			logger.info("Calculating pca scores")
-			chunk_paths_pca = fxns.calculate_pca_scores(chunk_paths = chunk_paths_imp, pca_fit = pca_fit, full_df_pca = full_df_pca, pca_n = len(rankscore_cols_keep_imputed), rankscore_cols = rankscore_cols_keep_imputed, pca_scaler_fit = imputed_scaler_fit)
+			chunk_paths_pca = fxns.calculate_pca_scores(chunk_paths = chunk_paths_imp, pca_fit = pca_fit, full_df_pca = full_df_pca, pca_n = len(rankscore_cols_keep_imputed), rankscore_cols = rankscore_cols_keep_imputed, pca_scaler_fit = imputed_scaler_fit, save_all = args.save_all)
 			ddf = dd.read_parquet(chunk_paths_pca)
 			logger.info(f"""Average partition size of imputed missense annot file with pca scores: {avg_chunk_size(chunk_paths_pca)}""")
 
@@ -222,7 +222,7 @@ def main(args=None):
 				del full_df
 
 			logger.info("Calculating ica scores")
-			chunk_paths_ica = fxns.calculate_ica_scores(chunk_paths = chunk_paths_pca, ica_fit = fast_ica_fit, ica_cols = ica_cols_keep_imputed, full_df_ica = full_df_ica)
+			chunk_paths_ica = fxns.calculate_ica_scores(chunk_paths = chunk_paths_pca, ica_fit = fast_ica_fit, ica_cols = ica_cols_keep_imputed, full_df_ica = full_df_ica, save_all = args.save_all)
 			ddf = dd.read_parquet(chunk_paths_ica)
 			logger.info(f"""Average partition size of imputed missense annot file with ica scores: {avg_chunk_size(chunk_paths_ica)}""")
 
@@ -243,7 +243,7 @@ def main(args=None):
 			logger.info(f"IC ~ MAF correlations written to {args.out}.ic_maf_corr.tsv")
 
 			logger.info("Calculating combined scores")
-			chunk_paths_predicted = fxns.calculate_damage_predictions(chunk_paths = chunk_paths_ica, rankscore_cols = rankscore_cols_keep, ica_cols = ica_cols_keep, pca_n = len(rankscore_cols_keep), pc_corr = pc_correlations, pca_exp_var = pca_explained_variance, ic_corr = ic_correlations)
+			chunk_paths_predicted = fxns.calculate_damage_predictions(chunk_paths = chunk_paths_ica, rankscore_cols = rankscore_cols_keep, ica_cols = ica_cols_keep, pca_n = len(rankscore_cols_keep), pc_corr = pc_correlations, pca_exp_var = pca_explained_variance, ic_corr = ic_correlations, save_all = args.save_all)
 			logger.info(f"""Average partition size of imputed missense annot file with pca scores, ica scores, and damage prediction scores: {avg_chunk_size(chunk_paths_predicted)}""")
 
 			logger.info("Calculating combined score correlations")
@@ -256,7 +256,7 @@ def main(args=None):
 			chunk_paths_orig_scored = fxns.merge_annot_scores(chunk_paths_orig)
 
 			logger.info("Calculating gene mask filters")
-			chunk_paths_filters = fxns.calculate_mask_filters(chunk_paths_orig_scored)
+			chunk_paths_filters = fxns.calculate_mask_filters(chunk_paths_orig_scored, ignore_mask_maf = args.ignore_mask_maf, save_all = args.save_all)
 			ddf = dd.read_parquet(chunk_paths_filters)
 			logger.info(f"""Average partition size of imputed missense annot file with pca scores, ica scores, damage prediction scores, and filters: {avg_chunk_size(chunk_paths_filters)}""")
 
