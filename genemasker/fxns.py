@@ -211,7 +211,7 @@ def damaging_pred(row):
 @resource_tracker(logger)
 def get_damaging_pred_og(df):
 	cols_drop=['Eigen-PC-raw_coding_rankscore', 'Eigen-raw_coding_rankscore', 'Polyphen2_HVAR_rankscore', 'CADD_raw_rankscore_hg19', 'BayesDel_noAF_rankscore', 'MutPred_rankscore']
-	df = df.drop(columns = cols_drop)
+	df = df.drop(columns = [x for x in cols_drop if x in df.columns])
 	for col in list(df.columns):
 		df[col + "_dmgpred"] = df[col].apply(damaging_pred)
 	score = df[[x for x in list(df.columns) if x.endswith('_dmgpred')]].mean(axis=1, numeric_only=True)
