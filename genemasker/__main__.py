@@ -8,7 +8,6 @@ from sklearn.experimental import enable_iterative_imputer
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 from sklearn.impute import IterativeImputer
-from genemasker.definitions import annot_cols
 from genemasker.tracking import resource_tracker
 import genemasker.fxns as fxns
 import dask.dataframe as dd
@@ -35,6 +34,14 @@ def main(args=None):
 
 	with ProgressBar():
 
+		if args.user_definitions:
+			logger.info(f"Loading user definitions: {args.user_definitions}")
+			fxns.load_user_definitions(args.user_definitions)
+			
+		if args.user_defined_filters:
+			logger.info(f"Loading user defined filters: {args.user_defined_filters}")
+			fxns.load_user_defined_filters(args.user_defined_filters)
+
 		@resource_tracker(logger)
 		def gene_masker(logger, logger_handler):
 
@@ -49,7 +56,7 @@ def main(args=None):
 				maf_df.rename(columns={args.stat_id_col: "#Uploaded_variation", args.stat_maf_col: "MAF"}, inplace=True)
 
 			logger.info("Reading and processing annotation file")
-			chunk_paths_orig, chunk_missense_paths_orig, chunk_count_orig, raw_variant_count, stored_variant_count, stored_missense_variant_count, rankscore_cols = fxns.process_annotation_file(annot = args.annot, cols = annot_cols, maf = maf_df, out_dir = tmpdir, chunk_size = args.chunk_size, n_partitions = 1)
+			chunk_paths_orig, chunk_missense_paths_orig, chunk_count_orig, raw_variant_count, stored_variant_count, stored_missense_variant_count, rankscore_cols = fxns.process_annotation_file(annot = args.annot, maf = maf_df, out_dir = tmpdir, chunk_size = args.chunk_size, n_partitions = 1)
 			print(chunk_missense_paths_orig)
 			ddf = dd.read_parquet(chunk_missense_paths_orig)
 			logger.info(f"""Average partition size of raw annot file: {avg_chunk_size(chunk_paths_orig)}""")

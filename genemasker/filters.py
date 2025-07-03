@@ -111,12 +111,21 @@ def IMPACT_MODERATE(row):
 	return(any(x in row['IMPACT'] for x in ['MODERATE']))
 
 # masks
+MASKS = []
+
+def mask(func):
+	MASKS.append(func)
+	return func
+	
+@mask
 def new_damaging_ic25(df):
 	return(df.apply(lambda x: LoF_HC(x) or (missense(x) and combo_ic25(x)), axis=1))
 
+@mask
 def new_damaging_og25(df):
 	return(df.apply(lambda x: LoF_HC(x) or (missense(x) and combo_og25(x)), axis=1))
 
+@mask
 def new_damaging_og25_0_01(df, ignore_mask_maf = False):
 	if ignore_mask_maf:
 		result = df.apply(lambda x: LoF_HC(x) or (missense(x) and combo_og25(x)), axis=1)
@@ -124,9 +133,11 @@ def new_damaging_og25_0_01(df, ignore_mask_maf = False):
 		result = df.apply(lambda x: (LoF_HC(x) or (missense(x) and combo_og25(x))) and maf1(x), axis=1)
 	return(result)
 
+@mask
 def new_damaging_og50(df):
 	return(df.apply(lambda x: LoF_HC(x) or (missense(x) and combo_og50(x)), axis=1))
 
+@mask
 def new_damaging_og50_0_01(df, ignore_mask_maf = False):
 	if ignore_mask_maf:
 		result = df.apply(lambda x: LoF_HC(x) or (missense(x) and combo_og50(x)), axis=1)
@@ -134,9 +145,11 @@ def new_damaging_og50_0_01(df, ignore_mask_maf = False):
 		result = df.apply(lambda x: (LoF_HC(x) or (missense(x) and combo_og50(x))) and maf1(x), axis=1)
 	return(result)
 
+@mask
 def x23633568_m1(df):
 	return(df.apply(lambda x: stop_gained(x) or frameshift(x) or (missense(x) and (SIFT_pred_D(x) or Polyphen2_HVAR_pred_D_or_P(x) or Polyphen2_HDIV_pred_D_or_P(x))), axis=1))
 
+@mask
 def x24507775_m6_0_01(df, ignore_mask_maf = False):
 	if ignore_mask_maf:
 		result = df.apply(lambda x: stop_gained(x) or stop_lost(x) or essential_splice(x) or Polyphen2_HDIV_pred_D(x) or Polyphen2_HVAR_pred_D(x), axis=1)
@@ -144,6 +157,7 @@ def x24507775_m6_0_01(df, ignore_mask_maf = False):
 		result = df.apply(lambda x: (stop_gained(x) or stop_lost(x) or essential_splice(x) or Polyphen2_HDIV_pred_D(x) or Polyphen2_HVAR_pred_D(x)) & maf1(x), axis=1)
 	return(result)
 
+@mask
 def x29177435_m1(df, ignore_mask_maf = False):
 	if ignore_mask_maf:
 		result = df.apply(lambda x: incomplete_terminal_codon(x) or start_retained(x) or stop_retained(x) or synonymous(x) or IMPACT_MODERATE(x) or IMPACT_HIGH(x), axis=1)
@@ -151,6 +165,7 @@ def x29177435_m1(df, ignore_mask_maf = False):
 		result = df.apply(lambda x: (incomplete_terminal_codon(x) or start_retained(x) or stop_retained(x) or synonymous(x) or IMPACT_MODERATE(x) or IMPACT_HIGH(x)) & maf1(x), axis=1)
 	return(result)
 
+@mask
 def x29378355_m1_0_01(df, ignore_mask_maf = False):
 	if ignore_mask_maf:
 		result = df.apply(lambda x: stop_gained(x) | missense(x) | essential_splice(x), axis=1)
@@ -158,6 +173,7 @@ def x29378355_m1_0_01(df, ignore_mask_maf = False):
 		result = df.apply(lambda x: (stop_gained(x) | missense(x) | essential_splice(x)) & maf1(x) & maf_gt_0_5(x), axis=1)
 	return(result)
 
+@mask
 def x30269813_m4(df, ignore_mask_maf = False):
 	if ignore_mask_maf:
 		result = df.apply(lambda x: stop_gained(x) | essential_splice(x) | frameshift(x) | indels(x) | (missense(x) & (Polyphen2_HDIV_pred_D(x) | Polyphen2_HVAR_pred_D(x))), axis=1)
@@ -165,6 +181,7 @@ def x30269813_m4(df, ignore_mask_maf = False):
 		result = df.apply(lambda x: (stop_gained(x) | essential_splice(x) | frameshift(x) | indels(x) | (missense(x) & (Polyphen2_HDIV_pred_D(x) | Polyphen2_HVAR_pred_D(x)))) & maf0_1(x), axis=1)
 	return(result)
 
+@mask
 def x30828346_m1(df, ignore_mask_maf = False):
 	if ignore_mask_maf:
 		result = df.apply(lambda x: missense(x) | synonymous(x) | stop_gained(x) | stop_lost(x), axis=1)
@@ -172,6 +189,7 @@ def x30828346_m1(df, ignore_mask_maf = False):
 		result = df.apply(lambda x: (missense(x) | synonymous(x) | stop_gained(x) | stop_lost(x)) & maf10(x), axis=1)
 	return(result)
 
+@mask
 def x31118516_m5_0_001(df, ignore_mask_maf = False):
 	if ignore_mask_maf:
 		result = df.apply(lambda x: LoF_HC(x) | (Polyphen2_HDIV_pred_D(x) & Polyphen2_HVAR_pred_D(x) & SIFT_pred_D(x) & LRT_pred_D(x) & MutationTaster_pred_D_or_A(x)), axis=1)
@@ -179,6 +197,7 @@ def x31118516_m5_0_001(df, ignore_mask_maf = False):
 		result = df.apply(lambda x: (LoF_HC(x) | (Polyphen2_HDIV_pred_D(x) & Polyphen2_HVAR_pred_D(x) & SIFT_pred_D(x) & LRT_pred_D(x) & MutationTaster_pred_D_or_A(x))) & maf0_1(x), axis=1)
 	return(result)
 
+@mask
 def x31383942_m10(df, ignore_mask_maf = False):
 	if ignore_mask_maf:
 		result = df.apply(lambda x: stop_gained(x) | stop_lost(x) | frameshift(x) | essential_splice(x) | ClinVar_pred_P_or_LP(x), axis=1)
@@ -186,6 +205,7 @@ def x31383942_m10(df, ignore_mask_maf = False):
 		result = df.apply(lambda x: (stop_gained(x) | stop_lost(x) | frameshift(x) | essential_splice(x) | ClinVar_pred_P_or_LP(x)) & maf0_1(x), axis=1)
 	return(result)
 
+@mask
 def x31383942_m4(df, ignore_mask_maf = False):
 	if ignore_mask_maf:
 		result = df.apply(lambda x: stop_gained(x) | stop_lost(x) | frameshift(x) | essential_splice(x) | (missense(x) & REVEL_score_0_55(x)), axis=1)
@@ -193,12 +213,15 @@ def x31383942_m4(df, ignore_mask_maf = False):
 		result = df.apply(lambda x: (stop_gained(x) | stop_lost(x) | frameshift(x) | essential_splice(x) | (missense(x) & REVEL_score_0_55(x))) & maf0_1(x), axis=1)
 	return(result)
 
+@mask
 def x32141622_m4(df):
 	return(df.apply(lambda x: indels(x), axis=1))
 
+@mask
 def x32141622_m7(df):
 	return(df.apply(lambda x: stop_gained(x) | essential_splice(x) | frameshift(x) | splice_region_variant(x), axis=1))
 
+@mask
 def x32141622_m7_0_01(df, ignore_mask_maf = False):
 	if ignore_mask_maf:
 		result = df.apply(lambda x: stop_gained(x) | essential_splice(x) | frameshift(x) | splice_region_variant(x), axis=1)
@@ -206,6 +229,7 @@ def x32141622_m7_0_01(df, ignore_mask_maf = False):
 		result = df.apply(lambda x: (stop_gained(x) | essential_splice(x) | frameshift(x) | splice_region_variant(x)) & maf1(x), axis=1)
 	return(result)
 
+@mask
 def x32853339_m1(df, ignore_mask_maf = False):
 	if ignore_mask_maf:
 		result = df.apply(lambda x: IMPACT_HIGH(x) | ClinVar_pred_P_or_LP(x), axis=1)
@@ -213,6 +237,7 @@ def x32853339_m1(df, ignore_mask_maf = False):
 		result = df.apply(lambda x: (IMPACT_HIGH(x) | ClinVar_pred_P_or_LP(x)) & maf1(x), axis=1)
 	return(result)
 
+@mask
 def x34183866_m1(df, ignore_mask_maf = False):
 	if ignore_mask_maf:
 		result = df.apply(lambda x: stop_gained(x) | essential_splice(x) | frameshift(x) | indels(x) | (missense(x) & Polyphen2_HDIV_pred_D(x)), axis=1)
@@ -220,6 +245,7 @@ def x34183866_m1(df, ignore_mask_maf = False):
 		result = df.apply(lambda x: (stop_gained(x) | essential_splice(x) | frameshift(x) | indels(x) | (missense(x) & Polyphen2_HDIV_pred_D(x))) & maf0_01(x), axis=1)
 	return(result)
 
+@mask
 def x34216101_m3_0_001(df, ignore_mask_maf = False):
 	if ignore_mask_maf:
 		result = df.apply(lambda x: Polyphen2_HDIV_pred_P(x) | Polyphen2_HVAR_pred_P(x), axis=1)
@@ -227,6 +253,7 @@ def x34216101_m3_0_001(df, ignore_mask_maf = False):
 		result = df.apply(lambda x: (Polyphen2_HDIV_pred_P(x) | Polyphen2_HVAR_pred_P(x)) & maf0_1(x), axis=1)
 	return(result)
 
+@mask
 def x36327219_m3(df, ignore_mask_maf = False):
 	if ignore_mask_maf:
 		result = df.apply(lambda x: IMPACT_HIGH(x) | (indels(x) & IMPACT_MODERATE(x)) | (missense(x) & Polyphen2_HDIV_pred_D(x) & Polyphen2_HVAR_pred_D(x) & LRT_pred_D(x) & MutationTaster_pred_D_or_A(x) & SIFT_pred_D(x)), axis=1)
@@ -234,6 +261,7 @@ def x36327219_m3(df, ignore_mask_maf = False):
 		result = df.apply(lambda x: (IMPACT_HIGH(x) | (indels(x) & IMPACT_MODERATE(x)) | (missense(x) & Polyphen2_HDIV_pred_D(x) & Polyphen2_HVAR_pred_D(x) & LRT_pred_D(x) & MutationTaster_pred_D_or_A(x) & SIFT_pred_D(x))) & maf1(x), axis=1)
 	return(result)
 
+@mask
 def x36411364_m4_0_001(df, ignore_mask_maf = False):
 	if ignore_mask_maf:
 		result = df.apply(lambda x: LoF_HC(x) | (missense(x) & REVEL_score_0_75(x)), axis=1)
@@ -241,6 +269,7 @@ def x36411364_m4_0_001(df, ignore_mask_maf = False):
 		result = df.apply(lambda x: (LoF_HC(x) | (missense(x) & REVEL_score_0_75(x))) & maf0_1(x), axis=1)
 	return(result)
 
+@mask
 def x37348876_m8(df, ignore_mask_maf = False):
 	if ignore_mask_maf:
 		result = df.apply(lambda x: CADD_phred_20(x) | LoF_HC(x), axis=1)
