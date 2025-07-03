@@ -32,7 +32,7 @@ def get_max(x):
 	return result
 
 @resource_tracker(logger)
-def process_annotation_file(annot, cols, maf, out_dir, chunk_size=None, n_partitions = 1):
+def process_annotation_file(annot, cols, out_dir, maf = None, chunk_size=None, n_partitions = 1):
 	compr = 'gzip' if annot.endswith(".bgz") else 'infer'
 	rankscore_cols = [col for col in cols.keys() if col.endswith('rankscore') or col.endswith('rankscore_hg19')]
 	logger.info(f"Processing annotation file: {annot} (compression={compr})")
@@ -58,12 +58,16 @@ def process_annotation_file(annot, cols, maf, out_dir, chunk_size=None, n_partit
 		raw_variant_count = raw_variant_count + chunk.shape[0]
 		chunk = chunk[chunk['PICK'] == "1"]
 		chunk['REVEL_score_max'] = chunk['REVEL_score'].apply(lambda x: get_max(x))
-		chunk = chunk.merge(maf.loc[maf['#Uploaded_variation'].isin(chunk['#Uploaded_variation'])], on="#Uploaded_variation", how="left")
+		if maf is not None:
+			chunk = chunk.merge(maf.loc[maf['#Uploaded_variation'].isin(chunk['#Uploaded_variation'])], on="#Uploaded_variation", how="left")
 		stored_variant_count = stored_variant_count + chunk.shape[0]
 		chunk.to_parquet(f"{out_dir}/{os.path.basename(annot)}-{chunk_count}.parquet", index=False)
 		chunk_paths.append(f"{out_dir}/{os.path.basename(annot)}-{chunk_count}.parquet")
 		chunk = chunk[chunk['Consequence'].str.contains("missense_variant", na=False)]
-		chunk = chunk[["#Uploaded_variation","MAF"] + rankscore_cols]
+		if maf is not None:
+			chunk = chunk[["#Uploaded_variation","MAF"] + rankscore_cols]
+		else:
+			chunk = chunk[["#Uploaded_variation"] + rankscore_cols]
 		chunk = chunk.dropna(subset = rankscore_cols, how='all')
 		stored_missense_variant_count = stored_missense_variant_count + chunk.shape[0]
 		chunk.to_parquet(f"{out_dir}/{os.path.basename(annot)}-{chunk_count}.missense.parquet", index=False)
@@ -88,7 +92,7 @@ def filter_annotation_file(chunk_paths, cols, ids):
 	return pd.concat(fdfs, sort=False, ignore_index=True) if fdfs else pd.DataFrame()
 
 @resource_tracker(logger)
-def impute_annotation_file(chunk_paths, iter_imp, rankscore_cols, scaler_fit = None, save_all = False):
+def impute_annotation_file(chunk_paths, impute_pipeline, rankscore_cols, save_all = False):
 	chunk_paths_out = []
 	i = 0
 	rankscore_cols_imputed = [x + "_imputed" for x in rankscore_cols]
@@ -96,12 +100,7 @@ def impute_annotation_file(chunk_paths, iter_imp, rankscore_cols, scaler_fit = N
 		i = i + 1
 		o = p.replace(".parquet",".imputed.parquet")
 		df = pd.read_parquet(p)
-		if scaler_fit is not None:
-			df_center_scale = scaler_fit.transform(df[rankscore_cols])
-			df_center_scale = iter_imp.transform(df_center_scale)
-			df[rankscore_cols_imputed] = scaler_fit.inverse_transform(df_center_scale)
-		else:
-			df[rankscore_cols_imputed] = iter_imp.transform(df[rankscore_cols])
+		df[rankscore_cols_imputed] = impute_pipeline.transform(df[rankscore_cols])
 		df.to_parquet(o, index=False)
 		if not save_all:
 			os.remove(p)
@@ -110,33 +109,26 @@ def impute_annotation_file(chunk_paths, iter_imp, rankscore_cols, scaler_fit = N
 	return chunk_paths_out, rankscore_cols_imputed
 
 @resource_tracker(logger)
-def fit_incremental_pca(chunk_paths, rankscore_cols, scaler_fit = None):
-	pca = IncrementalPCA(n_components = len(rankscore_cols))
+def fit_incremental_pca(chunk_paths, rankscore_cols, ipca, pca_scaler = None):
 	i = 0
 	for p in chunk_paths:
 		i = i + 1
 		df = pd.read_parquet(p)
-		if scaler_fit is not None:
-			df[rankscore_cols] = scaler_fit.transform(df[rankscore_cols])
-		pca.partial_fit(df[rankscore_cols])
+		if pca_scaler is not None:
+			df[rankscore_cols] = pca_scaler.partial_fit(df[rankscore_cols]).transform(df[rankscore_cols])
+		ipca.partial_fit(df[rankscore_cols])
 		logger.info(f"  ({i}/{len(chunk_paths)}) incremental pca partial fit on {os.path.basename(p)} complete")
-	return pca
+	return ipca, pca_scaler
 
 @resource_tracker(logger)
-def calculate_pca_scores(chunk_paths, pca_n, rankscore_cols, pca_fit = None, full_df_pca = None, pca_scaler_fit = None, save_all = False):
+def calculate_pca_scores(chunk_paths, pca_n, rankscore_cols, pca_pipeline, save_all = False):
 	chunk_paths_out = []
 	i = 0
 	for p in chunk_paths:
 		i = i + 1
 		o = p.replace(".parquet",".pca.parquet")
 		df = pd.read_parquet(p)
-		if full_df_pca is None:
-			if pca_scaler_fit is not None:
-				df_pca_trans = pca_scaler_fit.transform(df[rankscore_cols])
-			df_pca_fit = pca_fit.transform(df_pca_trans)
-			df = pd.concat([df, pd.DataFrame(data = df_pca_fit, columns = [f"pc{i+1}" for i in range(pca_n)])], axis = 1)
-		else:
-			df = pd.merge(df, full_df_pca, on='#Uploaded_variation', how='left')
+		df = pd.concat([df, pd.DataFrame(data = pca_pipeline.transform(df[rankscore_cols]), columns = [f"pc{i+1}" for i in range(pca_n)])], axis = 1)
 		df.to_parquet(o, index=False)
 		if not save_all:
 			os.remove(p)
@@ -145,18 +137,14 @@ def calculate_pca_scores(chunk_paths, pca_n, rankscore_cols, pca_fit = None, ful
 	return chunk_paths_out
 
 @resource_tracker(logger)
-def calculate_ica_scores(chunk_paths, ica_fit, ica_cols, full_df_ica = None, save_all = False):
+def calculate_ica_scores(chunk_paths, ica_pipeline, ica_cols, save_all = False):
 	chunk_paths_out = []
 	i = 0
 	for p in chunk_paths:
 		i = i + 1
 		o = p.replace(".parquet",".ica.parquet")
 		df = pd.read_parquet(p)
-		if full_df_ica is None:
-			df_ica_fit = ica_fit.transform(df[ica_cols])
-			df = pd.concat([df, pd.DataFrame(data = df_ica_fit, columns = [f"ic{i+1}" for i in range(len(ica_cols))])], axis = 1)
-		else:
-			df = pd.merge(df, full_df_ica, on='#Uploaded_variation', how='left')
+		df = pd.concat([df, pd.DataFrame(data = ica_pipeline.transform(df[ica_cols]), columns = [f"ic{i+1}" for i in range(len(ica_cols))])], axis = 1)
 		df.to_parquet(o, index=False)
 		if not save_all:
 			os.remove(p)
