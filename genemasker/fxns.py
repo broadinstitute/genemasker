@@ -9,7 +9,6 @@ import genemasker.filters as filters
 import math
 import os
 import dask.dataframe as dd
-import glob
 import argparse
 import genemasker.config as config
 import sys
@@ -21,8 +20,9 @@ logger = config.logger
 logger_handler = config.logger_handler
 
 sys.modules["filters"] = filters
+filter_builtins = {name for name, obj in inspect.getmembers(filters, inspect.isfunction)}
 
-def load_user_module(path):
+def load_user_module(path, builtins = None):
 	script_dir = os.path.dirname(os.path.abspath(__file__))
 	if script_dir not in sys.path:
 		sys.path.insert(0, script_dir)
@@ -31,15 +31,22 @@ def load_user_module(path):
 	user_module = importlib.util.module_from_spec(spec)
 	sys.modules[module_name] = user_module
 	spec.loader.exec_module(user_module)
-	
+	user_funcs = {name for name, obj in inspect.getmembers(user_module, inspect.isfunction) if obj.__module__ == module_name}
+	logger.info(f"user_funcs: {user_funcs}")
+	if builtins:
+		logger.info(f"builtins: {builtins}")
+		overlap = filter_builtins & user_funcs
+		if overlap:
+			raise ValueError(f"User defined filter name already exists as built in filter: {', '.join(overlap)}")
+
 def has_option(func, option_name):
     sig = inspect.signature(func)
     return option_name in sig.parameters
 	
 def load_user_defined_filters(user_defined_filters):
-	load_user_module(user_defined_filters)
+	load_user_module(user_defined_filters, builtins = filter_builtins)
 	
-def load_user_definitions(user_definitions):
+def load_user_defined_definitions(user_definitions):
 	load_user_module(user_definitions)
 
 def count_notna(row):
@@ -330,41 +337,19 @@ def merge_annot_scores(chunk_paths):
 	return chunk_paths_out
 
 @resource_tracker(logger)
-def calculate_mask_filters(chunk_paths, ignore_mask_maf = False, save_all = False):
+def calculate_mask_filters(chunk_paths, run_masks = [], save_all = False):
 	chunk_paths_out = []
 	i = 0
 	for p in chunk_paths:
 		i = i + 1
 		o = p.replace(".parquet",".filters.parquet")
 		df = pd.read_parquet(p)
-		for func in filters.MASKS:
-			if has_option(func, 'ignore_mask_maf'):
-				df[func.__name__] = func(df, ignore_mask_maf)
-			else:
-				df[func.__name__] = func(df)
-		#df['new_damaging_ic25'] = filters.new_damaging_ic25(df)
-		#df['new_damaging_og25'] = filters.new_damaging_og25(df)
-		#df['new_damaging_og25_0_01'] = filters.new_damaging_og25_0_01(df, ignore_mask_maf)
-		#df['new_damaging_og50'] = filters.new_damaging_og50(df)
-		#df['new_damaging_og50_0_01'] = filters.new_damaging_og50_0_01(df, ignore_mask_maf)
-		#df['x23633568_m1'] = filters.x23633568_m1(df)
-		#df['x24507775_m6_0_01'] = filters.x24507775_m6_0_01(df, ignore_mask_maf)
-		#df['x29177435_m1'] = filters.x29177435_m1(df, ignore_mask_maf)
-		#df['x29378355_m1_0_01'] = filters.x29378355_m1_0_01(df, ignore_mask_maf)
-		#df['x30269813_m4'] = filters.x30269813_m4(df, ignore_mask_maf)
-		#df['x30828346_m1'] = filters.x30828346_m1(df, ignore_mask_maf)
-		#df['x31118516_m5_0_001'] = filters.x31118516_m5_0_001(df, ignore_mask_maf)
-		#df['x31383942_m10'] = filters.x31383942_m10(df, ignore_mask_maf)
-		#df['x31383942_m4'] = filters.x31383942_m4(df, ignore_mask_maf)
-		#df['x32141622_m4'] = filters.x32141622_m4(df)
-		#df['x32141622_m7'] = filters.x32141622_m7(df)
-		#df['x32141622_m7_0_01'] = filters.x32141622_m7_0_01(df, ignore_mask_maf)
-		#df['x32853339_m1'] = filters.x32853339_m1(df, ignore_mask_maf)
-		#df['x34183866_m1'] = filters.x34183866_m1(df, ignore_mask_maf)
-		#df['x34216101_m3_0_001'] = filters.x34216101_m3_0_001(df, ignore_mask_maf)
-		#df['x36327219_m3'] = filters.x36327219_m3(df, ignore_mask_maf)
-		#df['x36411364_m4_0_001'] = filters.x36411364_m4_0_001(df, ignore_mask_maf)
-		#df['x37348876_m8'] = filters.x37348876_m8(df, ignore_mask_maf)
+		if len(run_masks) == 0:
+			run_func = [func for func in filters.MASKS]
+		else:
+			run_func = [func for func in filters.MASKS if func.__name__ in run_masks]
+		for func in run_func:
+			df[func.__name__] = func(df)
 		df.to_parquet(o, index=False)
 		if not save_all:
 			os.remove(p)
@@ -373,9 +358,11 @@ def calculate_mask_filters(chunk_paths, ignore_mask_maf = False, save_all = Fals
 	return chunk_paths_out
 
 @resource_tracker(logger)
-def generate_regenie_groupfiles(ddf, out):
-	#masks = ['new_damaging_ic25','new_damaging_og25','new_damaging_og25_0_01','new_damaging_og50','new_damaging_og50_0_01','x23633568_m1','x24507775_m6_0_01','x29177435_m1','x29378355_m1_0_01','x30269813_m4','x30828346_m1','x31118516_m5_0_001','x31383942_m10','x31383942_m4','x32141622_m4','x32141622_m7','x32141622_m7_0_01','x32853339_m1','x34183866_m1','x34216101_m3_0_001','x36327219_m3','x36411364_m4_0_001','x37348876_m8']
-	masks = [func.__name__ for func in filters.MASKS]
+def generate_regenie_groupfiles(ddf, run_masks, out):
+	if len(run_masks) == 0:
+		masks = [func.__name__ for func in filters.MASKS]
+	else:
+		masks = [func.__name__ for func in filters.MASKS if func.__name__ in run_masks]
 	df = ddf[["#Uploaded_variation",'Gene'] + masks].compute()
 	df[['chr','pos','ref','alt']]=df["#Uploaded_variation"].str.split(":",expand=True)
 	df['chr_num']=df['chr'].str.replace("chr","").replace({'X': '23', 'Y': '24', 'XY': '25', 'MT': '26', 'M': '26'})
