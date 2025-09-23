@@ -2,10 +2,13 @@ import collections
 
 annot_cols = collections.OrderedDict([
 	("#Uploaded_variation", "str"),
+	("Feature", "str"),
+	("Feature_type", "str"),
 	("Gene", "str"),
 	("PICK", "str"),
 	("Consequence", "str"),
 	("IMPACT", "str"),
+	("DOMAINS", "str"),
 	("LoF", "str"),
 	("Aloft_pred", "str"),
 	("BayesDel_addAF_pred", "str"),
@@ -81,6 +84,7 @@ annot_cols = collections.OrderedDict([
 ])
 
 annot_na_values = collections.OrderedDict([
+	("DOMAINS", "-"),
 	("BayesDel_addAF_rankscore", "-"),
 	("BayesDel_noAF_rankscore", "-"),
 	("CADD_raw_rankscore", "-"),

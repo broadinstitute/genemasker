@@ -44,9 +44,11 @@ def main(args=None):
 			fxns.load_user_defined_filters(args.user_defined_filters)
 
 		run_masks = []
-		if args.run_masks:
-			with open(args.run_masks, 'r') as file:
+		if args.run_masks_file:
+			with open(args.run_masks_file, 'r') as file:
 				run_masks = [item.strip() for item in file.readlines()]
+		elif args.run_masks:
+			run_masks = args.run_masks.split(',')
 
 		@resource_tracker(logger)
 		def gene_masker(logger, logger_handler):
@@ -59,26 +61,33 @@ def main(args=None):
 					tmpdir = f"{args.out}_tmp"
 					os.makedirs(tmpdir, exist_ok=False)
 		
-					maf_df = None
+					stat_df = None
 					if args.stat:
-						logger.info("Reading MAF file")
-						maf_df = pd.read_csv(args.stat, usecols=[args.stat_id_col, args.stat_maf_col], dtype={args.stat_id_col: "str", args.stat_maf_col: "float32"}, sep="\t")
-						maf_df.rename(columns={args.stat_id_col: "#Uploaded_variation", args.stat_maf_col: "MAF"}, inplace=True)
+						stat_cols = [args.stat_id_col] + [x for x in [args.stat_maf_col, args.stat_mac_col] if x is not None]
+						stat_cols_dtype = ['str'] + ['float32' for x in [args.stat_maf_col, args.stat_mac_col] if x is not None]
+						stat_cols_rename = ["#Uploaded_variation"] + ["MAF" for x in [args.stat_maf_col] if x is not None] + ["MAC" for x in [args.stat_mac_col] if x is not None]
+						logger.info("Reading stat file")
+						stat_df = pd.read_csv(args.stat, usecols=stat_cols, dtype=dict(zip(stat_cols, stat_cols_dtype)), sep="\t")
+						stat_df.rename(columns=dict(zip(stat_cols, stat_cols_rename)), inplace=True)
+						logger.info(f"loaded stat file with columns: {stat_cols} -> {list(stat_df.columns)}")
 		
 					logger.info("Reading and processing annotation file")
-					chunk_paths_orig, chunk_missense_paths_orig, chunk_count_orig, raw_variant_count, stored_variant_count, stored_missense_variant_count, rankscore_cols = fxns.process_annotation_file(annot = args.annot, maf = maf_df, out_dir = tmpdir, chunk_size = args.chunk_size, n_partitions = 1)
-					print(chunk_missense_paths_orig)
+					chunk_paths_orig, chunk_missense_paths_orig, chunk_count_orig, raw_variant_count, stored_variant_count, stored_missense_variant_count, rankscore_cols, var_id, uid = fxns.process_annotation_file(annot = args.annot, stat = stat_df, out_dir = tmpdir, chunk_size = args.chunk_size, n_partitions = 1, conserved_domains_only = args.conserved_domains_only, include_transcripts = args.include_transcripts)
 					ddf = dd.read_parquet(chunk_missense_paths_orig)
 					logger.info(f"""Average partition size of raw annot file: {avg_chunk_size(chunk_paths_orig)}""")
 					logger.info(f"Found {raw_variant_count} variants in raw annot file and stored {stored_variant_count}")
 					total_rows = ddf.shape[0].compute()
 					logger.info(f"Found {total_rows} missense variants in annot file")
 		
-					logger.info("Calculating missing proportions")
-					na_count = ddf[[col for col in ddf.columns if col.endswith('rankscore')]].isna().mean().reset_index().compute()
-					na_count.columns = ['Algorithm', 'MissingProportion']
-					na_count.sort_values('MissingProportion',ascending=False).to_csv(f"{args.out}.rankscore_miss.tsv", sep='\t', index=False)
-					logger.info(f"Missing proportions written to {args.out}.rankscore_miss.tsv")
+					if args.rankscore_miss:
+						logger.info(f"Importing rankscore missingness from {args.rankscore_miss}")
+						na_count = pd.read_csv(args.rankscore_miss, dtype={'Algorithm': 'str', 'MissingProportion': 'float32'}, sep="\t")
+					else:
+						logger.info("Calculating missing proportions")
+						na_count = ddf[[col for col in ddf.columns if col.endswith('rankscore')]].isna().mean().reset_index().compute()
+						na_count.columns = ['Algorithm', 'MissingProportion']
+						na_count.sort_values('MissingProportion',ascending=False).to_csv(f"{args.out}.rankscore_miss.tsv", sep='\t', index=False)
+						logger.info(f"Missing proportions written to {args.out}.rankscore_miss.tsv")
 					
 					columns_to_drop = list(na_count.loc[na_count['MissingProportion'] > 0.2, 'Algorithm'])
 					logger.info(f"Dropping ranskcores with >20% missing data: {columns_to_drop}")
@@ -101,9 +110,9 @@ def main(args=None):
 						logger.info("Selecting variants for imputer training data")
 						valid_rows = ddf.shape[0].compute()
 						logger.info(f"Found {valid_rows} variants with valid rankscores")
-						variant_ids_nonmiss = list(ddf[ddf['__non_miss_rankscore_keep__'] == len(rankscore_cols_keep)]['#Uploaded_variation'].compute())
+						variant_ids_nonmiss = list(ddf[ddf['__non_miss_rankscore_keep__'] == len(rankscore_cols_keep)][uid].compute())
 						logger.info(f"Found {len(variant_ids_nonmiss)} variants with no missing rankscores")
-						variant_ids_somemiss = list(ddf[ddf['__non_miss_rankscore_keep__'] != len(rankscore_cols_keep)]['#Uploaded_variation'].compute())
+						variant_ids_somemiss = list(ddf[ddf['__non_miss_rankscore_keep__'] != len(rankscore_cols_keep)][uid].compute())
 						logger.info(f"Found {len(variant_ids_somemiss)} variants with some missing rankscores")
 			
 						impute_tasks.append(('iterative_imputer', IterativeImputer(min_value=0, max_value=1, random_state=1398, max_iter=30, verbose=2, tol=args.impute_tol)))
@@ -119,7 +128,7 @@ def main(args=None):
 							logger.info(f"Setting number of variants with some missing rankscores to {math.ceil(valid_rows * args.impute_training_frac * 0.4)} ({len(random_ids_somemiss)} found)")
 			
 							logger.info(f"Extracting imputer training data for columns {rankscore_cols_keep}")
-							training_df = fxns.filter_annotation_file(chunk_missense_paths_orig, ["#Uploaded_variation"] + rankscore_cols_keep, random_ids_nonmiss + random_ids_somemiss)
+							training_df = fxns.filter_annotation_file(chunk_missense_paths_orig, [uid] + rankscore_cols_keep, random_ids_nonmiss + random_ids_somemiss, uid)
 							logger.info(f"Imputer training data contains {training_df.shape[0]} variants")
 			
 							logger.info("Fitting iterative imputer for training data")
@@ -130,7 +139,7 @@ def main(args=None):
 			
 						else:
 							logger.info(f"Extracting imputer training data for columns {rankscore_cols_keep}")
-							full_df = fxns.filter_annotation_file(chunk_missense_paths_orig, ["#Uploaded_variation"] + rankscore_cols_keep, variant_ids_nonmiss + variant_ids_somemiss)
+							full_df = fxns.filter_annotation_file(chunk_missense_paths_orig, [uid] + rankscore_cols_keep, variant_ids_nonmiss + variant_ids_somemiss, uid)
 							logger.info(f"Imputer full data contains {full_df.shape[0]} variants")
 			
 							logger.info("Fitting iterative imputer for full dataset")
@@ -169,13 +178,13 @@ def main(args=None):
 							if args.pca_training_frac:
 								logger.info("Selecting random variants for use in PCA training data")
 								random.seed(456)
-								variant_ids = list(ddf['#Uploaded_variation'].compute())
+								variant_ids = list(ddf[uid].compute())
 								logger.info(f"Found {len(variant_ids)} variants available for training data")
 								random_ids = random.sample(variant_ids, math.ceil(valid_rows * args.pca_training_frac))
 								logger.info(f"Setting number of variants for PCA training data to {math.ceil(valid_rows * args.pca_training_frac)}")
 			
 								logger.info(f"Extracting PCA training data from imputed rankscores for columns {rankscore_cols_keep_imputed}")
-								training_df = fxns.filter_annotation_file(chunk_paths_imp, ["#Uploaded_variation"] + rankscore_cols_keep_imputed, random_ids)
+								training_df = fxns.filter_annotation_file(chunk_paths_imp, [uid] + rankscore_cols_keep_imputed, random_ids, uid)
 								logger.info(f"ICA training data contains {training_df.shape[0]} variants")
 			
 								logger.info(f"Fitting model for PCA on columns {rankscore_cols_keep_imputed}")
@@ -186,7 +195,7 @@ def main(args=None):
 			
 							else:
 								logger.info(f"Extracting PCA full data from imputed rankscores for columns {rankscore_cols_keep_imputed}")
-								full_df = ddf[["#Uploaded_variation"] + rankscore_cols_keep_imputed].compute()
+								full_df = ddf[[uid] + rankscore_cols_keep_imputed].compute()
 								logger.info(f"PCA full data contains {full_df.shape[0]} variants")
 			
 								logger.info(f"Fitting model for PCA on columns {rankscore_cols_keep_imputed}")
@@ -217,13 +226,13 @@ def main(args=None):
 						if args.ica_training_frac:
 							logger.info("Selecting random variants for use in ICA training data")
 							random.seed(789)
-							variant_ids = list(ddf['#Uploaded_variation'].compute())
+							variant_ids = list(ddf[uid].compute())
 							logger.info(f"Found {len(variant_ids)} variants available for training data")
 							random_ids = random.sample(variant_ids, math.ceil(valid_rows * args.ica_training_frac))
 							logger.info(f"Setting number of variants for ICA training data to {math.ceil(valid_rows * args.ica_training_frac)}")
 			
 							logger.info(f"Extracting ICA training data from imputed rankscores for columns {ica_cols_keep_imputed}")
-							training_df = fxns.filter_annotation_file(chunk_paths_imp, ["#Uploaded_variation"] + ica_cols_keep_imputed, random_ids)
+							training_df = fxns.filter_annotation_file(chunk_paths_imp, [uid] + ica_cols_keep_imputed, random_ids, uid)
 							logger.info(f"ICA training data contains {training_df.shape[0]} variants")
 			
 							logger.info(f"Fitting model for ICA on columns {ica_cols_keep_imputed}")
@@ -234,7 +243,7 @@ def main(args=None):
 			
 						else:
 							logger.info(f"Extracting ICA full data from imputed rankscores for columns {ica_cols_keep_imputed}")
-							full_df = ddf[["#Uploaded_variation"] + ica_cols_keep_imputed].compute()
+							full_df = ddf[[uid] + ica_cols_keep_imputed].compute()
 							logger.info(f"ICA full data contains {full_df.shape[0]} variants")
 			
 							logger.info(f"Fitting model for ICA on columns {ica_cols_keep_imputed} and transforming full data")
@@ -278,7 +287,7 @@ def main(args=None):
 						logger.info(f"IC ~ MAF correlations written to {args.out}.ic_maf_corr.tsv")
 		
 					logger.info("Calculating combined scores")
-					chunk_paths_predicted = fxns.calculate_damage_predictions(chunk_paths = chunk_paths_ica, rankscore_cols = rankscore_cols_keep, ica_cols = ica_cols_keep, pca_n = len(rankscore_cols_keep), pc_corr = pc_correlations, pca_exp_var = pca_explained_variance, ic_corr = ic_correlations, save_all = args.save_all)
+					chunk_paths_predicted = fxns.calculate_damage_predictions(chunk_paths = chunk_paths_ica, rankscore_cols = rankscore_cols_keep, ica_cols = ica_cols_keep, pca_n = len(rankscore_cols_keep), pc_corr = pc_correlations, pca_exp_var = pca_explained_variance, ic_corr = ic_correlations, uid = uid, save_all = args.save_all)
 					logger.info(f"""Average partition size of imputed missense annot file with pca scores, ica scores, and damage prediction scores: {avg_chunk_size(chunk_paths_predicted)}""")
 		
 					logger.info("Calculating combined score correlations")
@@ -288,7 +297,7 @@ def main(args=None):
 					logger.info(f"Combined score correlations written to {args.out}.combined_score_corr.tsv")
 		
 					logger.info("Merge combined scores into annot file")
-					chunk_paths_orig_scored = fxns.merge_annot_scores(chunk_paths_orig)
+					chunk_paths_orig_scored = fxns.merge_annot_scores(chunk_paths_orig, uid)
 				
 				else:
 					chunk_paths_orig_scored = glob.glob(args.generate_from_scored)
@@ -301,14 +310,15 @@ def main(args=None):
 			
 			ddf = dd.read_parquet(chunk_paths_filters)
 			logger.info(f"""Average partition size of imputed missense annot file with pca scores, ica scores, damage prediction scores, and filters: {avg_chunk_size(chunk_paths_filters)}""")
-	
-			logger.info("Calculating proportion of damage for each prediction algorithm in the annot file")
-			pred_columns = [x for x in list(ddf.columns) if x.endswith("_pred")]
-			perc_damage = fxns.calculate_percent_damaging(ddf, pred_cols = pred_columns)
-			perc_damage.to_csv(f"{args.out}.damaging_prop.tsv", sep='\t', index=False)
+
+			if not args.skip_calc_perc_damaging:
+				logger.info("Calculating proportion of damage for each prediction algorithm in the annot file")
+				pred_columns = [x for x in list(ddf.columns) if x.endswith("_pred")]
+				perc_damage = fxns.calculate_percent_damaging(ddf, pred_cols = pred_columns)
+				perc_damage.to_csv(f"{args.out}.damaging_prop.tsv", sep='\t', index=False)
 
 			logger.info("Generating Regenie group files")
-			fxns.generate_regenie_groupfiles(ddf, run_masks, out = args.out)
+			fxns.generate_regenie_groupfiles(ddf, run_masks, var_id = var_id, uid = uid, out = args.out)
 
 			# Write all to file
 			ddf.compute().to_csv(f"{args.out}.results.tsv.gz", sep='\t', index=False, compression='gzip')
