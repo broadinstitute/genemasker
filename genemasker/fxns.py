@@ -64,7 +64,7 @@ def get_max(x):
 	return result
 
 @resource_tracker(logger)
-def process_annotation_file(annot, out_dir, stat = None, chunk_size=None, n_partitions = 1, conserved_domains_only = False, include_transcripts = False):
+def process_annotation_file(annot, out_dir, uid, stat = None, chunk_size=None, n_partitions = 1, conserved_domains_only = False, include_transcripts = False, var_id = '#Uploaded_variation', var_id_orig = '#Uploaded_variation_orig'):
 	compr = 'gzip' if annot.endswith(".bgz") else 'infer'
 	rankscore_cols = [col for col in annot_cols.keys() if col.endswith('rankscore') or col.endswith('rankscore_hg19')]
 	logger.info(f"Processing annotation file: {annot} (compression={compr})")
@@ -78,8 +78,6 @@ def process_annotation_file(annot, out_dir, stat = None, chunk_size=None, n_part
 		usecols=list(annot_cols.keys()),
 		dtype = annot_cols
 	)
-	var_id = '#Uploaded_variation'
-	var_id_orig = '#Uploaded_variation_orig'
 	raw_variant_count = 0
 	stored_variant_count = 0
 	stored_missense_variant_count = 0
@@ -95,11 +93,9 @@ def process_annotation_file(annot, out_dir, stat = None, chunk_size=None, n_part
 		transcript_cols = []
 		if include_transcripts:
 			transcript_cols = transcript_cols + ['Uploaded_variation_transcript','Feature','Feature_type']
-			uid = 'Uploaded_variation_transcript'
 			chunk = chunk[chunk['Feature_type'] == "Transcript"]
 			chunk['Uploaded_variation_transcript'] = chunk['#Uploaded_variation'].str.cat(chunk['Feature'], sep="___")
 		else:
-			uid = '#Uploaded_variation'
 			chunk = chunk[chunk['PICK'] == "1"]
 		if conserved_domains_only:
 			chunk = chunk[chunk['DOMAINS'].notnull()]
@@ -124,7 +120,7 @@ def process_annotation_file(annot, out_dir, stat = None, chunk_size=None, n_part
 		else:
 			logger.info(f"Found {chunk.shape[0]} missense variants, skipping chunk {chunk_count}")
 	logger.info(f"Finished processing annotation file: {annot}")
-	return chunk_paths, chunk_missense_paths, chunk_count, raw_variant_count, stored_variant_count, stored_missense_variant_count, rankscore_cols, var_id, var_id_orig, uid
+	return chunk_paths, chunk_missense_paths, chunk_count, raw_variant_count, stored_variant_count, stored_missense_variant_count, rankscore_cols
 
 @resource_tracker(logger)
 def filter_annotation_file(chunk_paths, cols, ids, uid):
