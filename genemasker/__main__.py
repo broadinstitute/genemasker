@@ -72,7 +72,7 @@ def main(args=None):
 						logger.info(f"loaded stat file with columns: {stat_cols} -> {list(stat_df.columns)}")
 		
 					logger.info("Reading and processing annotation file")
-					chunk_paths_orig, chunk_missense_paths_orig, chunk_count_orig, raw_variant_count, stored_variant_count, stored_missense_variant_count, rankscore_cols, var_id, uid = fxns.process_annotation_file(annot = args.annot, stat = stat_df, out_dir = tmpdir, chunk_size = args.chunk_size, n_partitions = 1, conserved_domains_only = args.conserved_domains_only, include_transcripts = args.include_transcripts)
+					chunk_paths_orig, chunk_missense_paths_orig, chunk_count_orig, raw_variant_count, stored_variant_count, stored_missense_variant_count, rankscore_cols, var_id, var_id_orig, uid = fxns.process_annotation_file(annot = args.annot, stat = stat_df, out_dir = tmpdir, chunk_size = args.chunk_size, n_partitions = 1, conserved_domains_only = args.conserved_domains_only, include_transcripts = args.include_transcripts)
 					ddf = dd.read_parquet(chunk_missense_paths_orig)
 					logger.info(f"""Average partition size of raw annot file: {avg_chunk_size(chunk_paths_orig)}""")
 					logger.info(f"Found {raw_variant_count} variants in raw annot file and stored {stored_variant_count}")
@@ -318,7 +318,7 @@ def main(args=None):
 				perc_damage.to_csv(f"{args.out}.damaging_prop.tsv", sep='\t', index=False)
 
 			logger.info("Generating Regenie group files")
-			fxns.generate_regenie_groupfiles(ddf, run_masks, var_id = var_id, uid = uid, out = args.out)
+			fxns.generate_regenie_groupfiles(ddf, run_masks, var_id = var_id, var_id_orig = var_id_orig, uid = uid, recode_chrs = args.recode_chrs, out = args.out)
 
 			# Write all to file
 			ddf.compute().to_csv(f"{args.out}.results.tsv.gz", sep='\t', index=False, compression='gzip')

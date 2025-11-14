@@ -1,4 +1,5 @@
 import argparse
+import json
 from genemasker.__version__ import version
 import genemasker.logging as logging
 
@@ -22,6 +23,7 @@ parser.add_argument('--ic-maf-corr', help='ic~maf correlations from previous run
 parser.add_argument('--conserved-domains-only', action='store_true', help='include only conserved domains')
 parser.add_argument('--include-transcripts', action='store_true', help='include all annotated transcripts')
 parser.add_argument('--annot', help='VEP annotation files')
+parser.add_argument('--recode-chrs', default=None, type=json.loads, help='recode chromosomes using python dictionary in json format (e.g. \'{"X": "23"}\')')
 parser.add_argument('--stat', help='MAF file')
 parser.add_argument('--stat-id-col', help='Column name in MAF matching annotation file')
 parser.add_argument('--stat-maf-col', help='MAF column name')

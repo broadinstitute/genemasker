@@ -79,6 +79,7 @@ def process_annotation_file(annot, out_dir, stat = None, chunk_size=None, n_part
 		dtype = annot_cols
 	)
 	var_id = '#Uploaded_variation'
+	var_id_orig = '#Uploaded_variation_orig'
 	raw_variant_count = 0
 	stored_variant_count = 0
 	stored_missense_variant_count = 0
@@ -89,6 +90,8 @@ def process_annotation_file(annot, out_dir, stat = None, chunk_size=None, n_part
 		chunk_count += 1
 		logger.info(f"  Reading chunk {chunk_count} from {annot}")
 		raw_variant_count = raw_variant_count + chunk.shape[0]
+		chunk['#Uploaded_variation_orig'] = chunk['#Uploaded_variation']
+		chunk['#Uploaded_variation'] = chunk['#Uploaded_variation'].str.replace('chr', '', regex=False)
 		transcript_cols = []
 		if include_transcripts:
 			transcript_cols = transcript_cols + ['Uploaded_variation_transcript','Feature','Feature_type']
@@ -105,18 +108,23 @@ def process_annotation_file(annot, out_dir, stat = None, chunk_size=None, n_part
 			chunk = chunk.merge(stat.loc[stat['#Uploaded_variation'].isin(chunk['#Uploaded_variation'])], on="#Uploaded_variation", how="left")
 		stored_variant_count = stored_variant_count + chunk.shape[0]
 		chunk.to_parquet(f"{out_dir}/{os.path.basename(annot)}-{chunk_count}.parquet", index=False)
+		logger.info(f"Wrote {chunk.shape[0]} variants to {out_dir}/{os.path.basename(annot)}-{chunk_count}.parquet")
 		chunk_paths.append(f"{out_dir}/{os.path.basename(annot)}-{chunk_count}.parquet")
 		chunk = chunk[chunk['Consequence'].str.contains("missense_variant", na=False)]
 		if stat is not None:
-			chunk = chunk[["#Uploaded_variation"] + transcript_cols + [x for x in ["MAF","MAC"] if x in list(stat.columns)] + rankscore_cols]
+			chunk = chunk[["#Uploaded_variation", "#Uploaded_variation_orig"] + transcript_cols + [x for x in ["MAF","MAC"] if x in list(stat.columns)] + rankscore_cols]
 		else:
-			chunk = chunk[["#Uploaded_variation"] + transcript_cols + rankscore_cols]
+			chunk = chunk[["#Uploaded_variation", "#Uploaded_variation_orig"] + transcript_cols + rankscore_cols]
 		chunk = chunk.dropna(subset = rankscore_cols, how='all')
 		stored_missense_variant_count = stored_missense_variant_count + chunk.shape[0]
-		chunk.to_parquet(f"{out_dir}/{os.path.basename(annot)}-{chunk_count}.missense.parquet", index=False)
-		chunk_missense_paths.append(f"{out_dir}/{os.path.basename(annot)}-{chunk_count}.missense.parquet")
+		if chunk.shape[0] > 0:
+			chunk.to_parquet(f"{out_dir}/{os.path.basename(annot)}-{chunk_count}.missense.parquet", index=False)
+			logger.info(f"Wrote {chunk.shape[0]} missense variants to {out_dir}/{os.path.basename(annot)}-{chunk_count}.missense.parquet")
+			chunk_missense_paths.append(f"{out_dir}/{os.path.basename(annot)}-{chunk_count}.missense.parquet")
+		else:
+			logger.info(f"Found {chunk.shape[0]} missense variants, skipping chunk {chunk_count}")
 	logger.info(f"Finished processing annotation file: {annot}")
-	return chunk_paths, chunk_missense_paths, chunk_count, raw_variant_count, stored_variant_count, stored_missense_variant_count, rankscore_cols, var_id, uid
+	return chunk_paths, chunk_missense_paths, chunk_count, raw_variant_count, stored_variant_count, stored_missense_variant_count, rankscore_cols, var_id, var_id_orig, uid
 
 @resource_tracker(logger)
 def filter_annotation_file(chunk_paths, cols, ids, uid):
@@ -341,8 +349,11 @@ def merge_annot_scores(chunk_paths, uid):
 		q = p.replace(".parquet",".missense.imputed.pca.ica.predictions.parquet")
 		o = p.replace(".parquet",".scored.parquet")
 		df = pd.read_parquet(p)
-		df_scores = pd.read_parquet(q)
-		df = df.merge(df_scores[[uid,"Combo_mean_score_og","Combo_mean_score_pc","Combo_mean_score_ic"]], on=uid, how="left")
+		if os.path.exists(p.replace(".parquet",".missense.imputed.pca.ica.predictions.parquet")):
+			df_scores = pd.read_parquet(q)
+			df = df.merge(df_scores[[uid,"Combo_mean_score_og","Combo_mean_score_pc","Combo_mean_score_ic"]], on=uid, how="left")
+		else:
+			df = df.merge(pd.DataFrame({uid: pd.Series(dtype='str'), 'Combo_mean_score_og': pd.Series(dtype='float'), 'Combo_mean_score_pc': pd.Series(dtype='float'), 'Combo_mean_score_ic': pd.Series(dtype='float')}), on=uid, how="left")
 		df.to_parquet(o, index=False)
 		chunk_paths_out.append(o)
 	return chunk_paths_out
@@ -369,14 +380,21 @@ def calculate_mask_filters(chunk_paths, run_masks = [], save_all = False):
 	return chunk_paths_out
 
 @resource_tracker(logger)
-def generate_regenie_groupfiles(ddf, run_masks, var_id, uid, out):
+def generate_regenie_groupfiles(ddf, run_masks, var_id, var_id_orig, uid, recode_chrs, out):
 	if len(run_masks) == 0:
 		masks = [func.__name__ for func in filters.MASKS]
 	else:
 		masks = [func.__name__ for func in filters.MASKS if func.__name__ in run_masks]
-	df = ddf[[var_id, uid, 'Gene', 'Feature'] + masks].compute()
+	if uid != var_id:
+		df = ddf[[var_id, var_id_orig, uid, 'Gene', 'Feature'] + masks].compute()
+	else:
+		df = ddf[[var_id, var_id_orig, 'Gene', 'Feature'] + masks].compute()
+	if recode_chrs is not None:
+		df[var_id]=df[var_id].replace(recode_chrs, regex=True)
+		if uid != var_id:
+			df[uid]=df[uid].replace(recode_chrs, regex=True)
 	df[['chr','pos','ref','alt']]=df[var_id].str.split(":",expand=True)
-	df['chr_num']=df['chr'].str.replace("chr","").replace({'X': '23', 'Y': '24', 'XY': '25', 'MT': '26', 'M': '26'})
+	df['chr_num']=df['chr'].str.replace("chr","").replace({'^X': '23', '^Y': '24', '^XY': '25', '^MT': '26', '^M': '26'}, regex=True)
 	df.chr_num=df.chr_num.astype(int)
 	df.pos=df.pos.astype(int)
 	df.sort_values(by=['chr_num','pos'],inplace=True)
@@ -388,15 +406,15 @@ def generate_regenie_groupfiles(ddf, run_masks, var_id, uid, out):
 		df_first_pos=df[['Gene','chr','chr_num','pos']].drop_duplicates(subset=['Gene'], keep='first')
 		with open(f"{out}.regenie.setlist.tsv", 'w') as setlist:
 			logger.info("grouping variants into genes")
-			setlist_df=df[['Gene',var_id]]
+			setlist_df=df[['Gene',var_id_orig]]
 			setlist_df=setlist_df.groupby('Gene', as_index=False, sort=False).agg(','.join)
 			setlist_df=df_first_pos.merge(setlist_df)
 			setlist_df.sort_values(by=['chr_num','pos'],inplace=True)
-			setlist_df[['Gene','chr','pos',var_id]].to_csv(setlist, header=False, index=False, sep="\t", na_rep="NA")
+			setlist_df[['Gene','chr','pos',var_id_orig]].to_csv(setlist, header=False, index=False, sep="\t", na_rep="NA")
 		logger.info(f"grouping variants into masks: {','.join(masks)}")
 		for mask in masks:
 			logger.info("adding annotations for mask " + mask)
-			mask_df=df[df[mask] == True][[var_id,'Gene']]
+			mask_df=df[df[mask] == True][[var_id_orig,'Gene']]
 			mask_df['mask']=mask
 			with open(f"{out}.regenie.annotations.{mask}.tsv", 'w') as annots:
 				logger.info(f"writing annotations to file for mask {mask}")
@@ -409,15 +427,15 @@ def generate_regenie_groupfiles(ddf, run_masks, var_id, uid, out):
 		df_first_pos=df[['Gene_Feature','chr','chr_num','pos']].drop_duplicates(subset=['Gene_Feature'], keep='first')
 		with open(f"{out}.regenie.setlist.tsv", 'w') as setlist:
 			logger.info("grouping variants into genes")
-			setlist_df=df[['Gene_Feature',var_id]]
+			setlist_df=df[['Gene_Feature',var_id_orig]]
 			setlist_df=setlist_df.groupby('Gene_Feature', as_index=False, sort=False).agg(','.join)
 			setlist_df=df_first_pos.merge(setlist_df)
 			setlist_df.sort_values(by=['chr_num','pos'],inplace=True)
-			setlist_df[['Gene_Feature','chr','pos',var_id]].to_csv(setlist, header=False, index=False, sep="\t", na_rep="NA")
+			setlist_df[['Gene_Feature','chr','pos',var_id_orig]].to_csv(setlist, header=False, index=False, sep="\t", na_rep="NA")
 		logger.info(f"grouping variants into masks: {','.join(masks)}")
 		for mask in masks:
 			logger.info("adding annotations for mask " + mask)
-			mask_df=df[df[mask] == True][[var_id,'Gene_Feature']]
+			mask_df=df[df[mask] == True][[var_id_orig,'Gene_Feature']]
 			mask_df['mask']=mask
 			with open(f"{out}.regenie.annotations.{mask}.tsv", 'w') as annots:
 				logger.info(f"writing annotations to file for mask {mask}")
