@@ -1,7 +1,7 @@
 import argparse
 import json
 from genemasker.__version__ import version
-import genemasker.logging as logging
+import genemasker.communicate as communicate
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--version', action='version', version="%(prog)s v" + version)
@@ -69,9 +69,9 @@ if args.run_masks_file and args.run_masks:
 	parser.error(f"You must provide either --run-masks-file or --run-masks, but not both")
 
 if args.chunk is not None:
-	logger, logger_handler = logging.setup_logger(f"{args.out}.chunk{str(args.chunk)}.genemasker.log")
+	logger, logger_handler = communicate.setup_logger(f"{args.out}.chunk{str(args.chunk)}.genemasker.log")
 else:
-	logger, logger_handler = logging.setup_logger(f"{args.out}.genemasker.log")
+	logger, logger_handler = communicate.setup_logger(f"{args.out}.genemasker.log")
 
 logger.info(f"genemasker v{version}")
 logger.info("user-supplied arguments:")
