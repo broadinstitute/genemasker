@@ -3,8 +3,9 @@ genemasker
 
 This application produces masked group/gene variant inclusion files for rare variant analysis.
 
-.. image:: https://zenodo.org/badge/zenodo.932808322.svg
-   :target: https://zenodo.org/badge/latestdoi/932808322
+.. image:: https://zenodo.org/badge/latestdoi/19161631.svg
+   :target: https://doi.org/10.5281/zenodo.19161631
+   :alt: DOI
 
 Installation
 ************
