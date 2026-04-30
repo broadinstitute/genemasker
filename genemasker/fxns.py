@@ -107,11 +107,13 @@ def process_annotation_file(annot, out_dir, uid, stat = None, chunk_size=None, n
 		logger.info(f"Wrote {chunk.shape[0]} variants to {out_dir}/{os.path.basename(annot)}-{chunk_count}.parquet")
 		chunk_paths.append(f"{out_dir}/{os.path.basename(annot)}-{chunk_count}.parquet")
 		chunk = chunk[chunk['Consequence'].str.contains("missense_variant", na=False)]
+		logger.info(f"chunk {chunk_count} filtered to {chunk.shape[0]} missense variants")
 		if stat is not None:
 			chunk = chunk[["#Uploaded_variation", "#Uploaded_variation_orig"] + transcript_cols + [x for x in ["MAF","MAC"] if x in list(stat.columns)] + rankscore_cols]
 		else:
 			chunk = chunk[["#Uploaded_variation", "#Uploaded_variation_orig"] + transcript_cols + rankscore_cols]
 		chunk = chunk.dropna(subset = rankscore_cols, how='all')
+		logger.info(f"chunk {chunk_count} filtered to {chunk.shape[0]} variants with non-missing rankscore columns")
 		stored_missense_variant_count = stored_missense_variant_count + chunk.shape[0]
 		if chunk.shape[0] > 0:
 			chunk.to_parquet(f"{out_dir}/{os.path.basename(annot)}-{chunk_count}.missense.parquet", index=False)
