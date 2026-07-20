@@ -332,7 +332,9 @@ genemasker --annot data/vep.annot.tsv.bgz --stat data/stat.tsv --stat-id-col ID 
 
 ### `--run-masks`
 
-Comma-separated mask function names.
+Comma-separated built-in or user-defined mask function names. Every requested
+name is validated; unknown names stop the run with an error. This option cannot
+be combined with `--mask-set` or `--run-masks-file`.
 
 Example:
 
@@ -342,7 +344,8 @@ genemasker --annot data/vep.annot.tsv.bgz --stat data/stat.tsv --stat-id-col ID 
 
 ### `--run-masks-file`
 
-File of mask names (one per line).
+File of built-in or user-defined mask names (one per line). Every requested name
+is validated. This option cannot be combined with `--mask-set` or `--run-masks`.
 
 Example:
 

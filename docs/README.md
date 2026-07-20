@@ -48,6 +48,22 @@ file with `--stat`, `--stat-id-col`, and at least one of `--stat-maf-col` or
 Most built-in masks use `MAF`, and the score-correlation steps also use it, so a
 normal run should supply `--stat-maf-col`.
 
+## Mask selection
+
+The curated baseline masks are organized into three sets:
+
+- `all` (the default): all 18 baseline masks.
+- `low-frequency`: nine masks in the Baseline low-frequency strategy.
+- `rare`: nine masks in the Baseline rare strategy.
+
+Choose a non-default set with `--mask-set low-frequency` or `--mask-set rare`.
+Alternatively, use `--run-masks` or `--run-masks-file` for an explicit list of
+built-in or user-defined masks. These three selection mechanisms are mutually
+exclusive. Requested explicit names are validated and unknown names stop the
+run with an error. See [Built-in masks](masks.md) for the complete membership
+and [Custom masks and annotation definitions](custom-masks.md) for custom-mask
+usage.
+
 ## Final outputs
 
 For `--out results/study1`, a completed non-chunked run writes:
