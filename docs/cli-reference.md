@@ -342,23 +342,27 @@ genemasker --annot data/vep.annot.tsv.bgz --stat data/stat.tsv --stat-id-col ID 
 
 ### `--user-definitions`
 
-Load custom definitions module.
+Load a custom definitions module before reading `--annot`. It can add columns
+to the shared annotation definitions.
 
 Example:
 
 ```bash
-genemasker --annot data/vep.annot.tsv.bgz --stat data/stat.tsv --stat-id-col ID --stat-maf-col MAF --user-definitions custom/definitions.py --out results/run
+genemasker --annot data/vep.annot.tsv.bgz --stat data/stat.tsv --stat-id-col ID --stat-maf-col MAF --user-definitions custom/study_definitions.py --out results/run
 ```
 
 ### `--user-defined-filters`
 
-Load custom filters module (function names must not conflict with built-ins).
+Load a custom filters module (function names must not conflict with built-ins).
 
 Example:
 
 ```bash
-genemasker --annot data/vep.annot.tsv.bgz --stat data/stat.tsv --stat-id-col ID --stat-maf-col MAF --user-defined-filters custom/filters.py --out results/run
+genemasker --annot data/vep.annot.tsv.bgz --stat data/stat.tsv --stat-id-col ID --stat-maf-col MAF --user-defined-filters custom/study_filters.py --run-masks study_damage_080 --out results/run
 ```
+
+See [Custom Masks and Annotation Definitions](custom-masks.md) for the required
+Python-file structure and checkpoint examples.
 
 ## Output/Runtime Behavior
 

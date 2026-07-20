@@ -1,211 +1,67 @@
 # genemasker Documentation
 
-## Overview
+`genemasker` produces Regenie-compatible gene/group mask files for rare-variant
+analysis from VEP-style annotations.  It can train damage-scoring models from an
+annotation file, project a previously trained model onto a new annotation file,
+or resume from saved parquet checkpoints.
 
-`genemasker` generates Regenie-compatible gene/group mask files from VEP-style annotation data for rare variant burden testing.
-
-The installed CLI entrypoint is:
+The installed command is:
 
 ```bash
 genemasker
 ```
 
-Package version in this repository: `1.0`.
+## Start here
 
-## What It Produces
+- [Mask production workflows](workflows.md) explains the raw-data, projection,
+  scored-parquet, filtered-parquet, and chunked workflows, including what each
+  one reads and writes.
+- [Custom masks and annotation definitions](custom-masks.md) explains how to
+  supply Python files through `--user-defined-filters` and `--user-definitions`.
+- [Built-in masks](masks.md) lists the masks included with the package.
+- [CLI reference](cli-reference.md) describes every command-line option.
 
-For output prefix `--out results/study1`, the pipeline writes:
+## Inputs
 
-- `results/study1.regenie.setlist.tsv`
-- `results/study1.regenie.annotations.<mask>.tsv` (one file per mask)
-- `results/study1.regenie.mask.<mask>.tsv` (one file per mask)
-- `results/study1.results.tsv.gz` (full tabular results)
-- `results/study1.genemasker.log` (or `results/study1.chunk<N>.genemasker.log` when `--chunk` is used)
+### Annotation file
 
-It can also write intermediate artifacts (for reuse) and summary files such as:
+`--annot` is a tab-delimited VEP-style annotation file. Its required columns
+and dtypes are defined in `genemasker/definitions.py`; the reader requests all
+of those columns. Files ending in `.bgz` are read as gzip-compressed files.
 
-- `*.rankscore_miss.tsv`
-- `*.rankscore_maf_corr.tsv`
-- `*.pc_maf_corr.tsv`
-- `*.ic_maf_corr.tsv`
-- `*.pca_explained_variance.tsv`
-- `*.combined_score_corr.tsv`
-- `*.damaging_prop.tsv`
-- `*.impute_pipeline.pkl`, `*.pca_pipeline.pkl`, `*.ica_pipeline.pkl` (when `--save-all`)
+At a minimum, the standard definitions include variant ID (`#Uploaded_variation`),
+gene and transcript fields, consequence/impact fields, LoF and predictor fields,
+many rank-score columns, `CADD_phred_hg19`, and `REVEL_score`. The variant ID is
+expected to be colon-delimited (for example, `chr1:12345:A:G`) so the final
+Regenie files can be ordered by chromosome and position.
 
-## Input Requirements
+By default, the `PICK == "1"` VEP row is used for each variant. `--include-transcripts`
+instead retains transcript annotations and makes each gene/transcript combination
+a separate group. `--conserved-domains-only` keeps only rows with a non-null
+`DOMAINS` value.
 
-### 1) Annotation file (`--annot`)
+### Stat file
 
-`genemasker` expects a tab-delimited VEP-like annotation file with the columns defined in `genemasker/definitions.py`.
+When calculating scores from an annotation file, provide a tab-delimited stat
+file with `--stat`, `--stat-id-col`, and at least one of `--stat-maf-col` or
+`--stat-mac-col`. The selected fields are renamed internally to `MAF` and `MAC`.
+Most built-in masks use `MAF`, and the score-correlation steps also use it, so a
+normal run should supply `--stat-maf-col`.
 
-- If the file name ends with `.bgz`, gzip compression is assumed.
-- Otherwise pandas auto-detect (`infer`) is used.
+## Final outputs
 
-Core required columns include:
+For `--out results/study1`, a completed non-chunked run writes:
 
-- `#Uploaded_variation`, `Feature`, `Feature_type`, `Gene`, `PICK`, `Consequence`, `IMPACT`, `DOMAINS`, `LoF`
-- Prediction/categorical fields used by masks (examples: `SIFT_pred`, `Polyphen2_HVAR_pred`, `clinvar_clnsig`)
-- Rankscore fields used for imputation/PCA/ICA (many `*_rankscore` columns)
-- `CADD_phred_hg19`, `REVEL_score`
+- `results/study1.regenie.setlist.tsv` — gene/group definitions and their variants.
+- `results/study1.regenie.annotations.<mask>.tsv` — variants assigned to each mask.
+- `results/study1.regenie.mask.<mask>.tsv` — Regenie mask declaration for each mask.
+- `results/study1.results.tsv.gz` — the final annotation table, including mask columns.
+- `results/study1.genemasker.log` — run log.
 
-### 2) Variant frequency/stat file (`--stat`)
+Score summaries are also written as applicable: `rankscore_miss.tsv`,
+`rankscore_maf_corr.tsv`, `pc_maf_corr.tsv`, `ic_maf_corr.tsv`,
+`pca_explained_variance.tsv`, `combined_score_corr.tsv`, and `damaging_prop.tsv`.
 
-A tab-delimited file joined to annotation rows by variant ID. You must provide:
-
-- `--stat`
-- `--stat-id-col`
-- At least one of: `--stat-maf-col`, `--stat-mac-col`
-
-In practice, masks and downstream correlation steps depend on MAF, so provide `--stat-maf-col` for standard use.
-
-### 3) Optional user extension files
-
-- `--user-definitions`: Python file loaded as a module for custom definitions.
-- `--user-defined-filters`: Python file with additional mask/filter functions.
-
-## Pipeline Modes
-
-`genemasker` supports three execution patterns.
-
-### Mode A: Full run from annotation
-
-Reads annotation + stat data, computes combined damage scores, applies masks, and writes Regenie files.
-
-### Mode B: Resume from scored parquet
-
-Use `--generate-from-scored` to skip score computation and regenerate filters/group files.
-
-### Mode C: Resume from filtered parquet
-
-Use `--generate-from-filtered` to skip directly to group file generation.
-
-## Argument Validation Rules
-
-- `--out` is always required.
-- If **neither** `--generate-from-scored` nor `--generate-from-filtered` is used, you must provide:
-  - full projection reuse set:
-    - `--impute-pipeline`, `--pca-pipeline`, `--ica-pipeline`, `--rankscore-maf-corr`, `--pc-maf-corr`, `--ic-maf-corr`, `--rankscore-miss`
-  - and/or stat-file set:
-    - `--stat`, `--stat-id-col`, and at least one of `--stat-maf-col`, `--stat-mac-col`
-- `--run-masks-file` and `--run-masks` are mutually exclusive.
-- If `--chunk` is supplied, group file generation is skipped (chunk-level processing only).
-
-## Quick Start
-
-```bash
-genemasker \
-  --annot data/vep.annot.tsv.bgz \
-  --stat data/variant_stats.tsv \
-  --stat-id-col variant_id \
-  --stat-maf-col maf \
-  --stat-mac-col mac \
-  --out results/study1
-```
-
-## Resume Examples
-
-From scored parquet files:
-
-```bash
-genemasker \
-  --generate-from-scored 'results/study1_tmp/*.scored.parquet' \
-  --out results/study1_rerun
-```
-
-From filtered parquet files:
-
-```bash
-genemasker \
-  --generate-from-filtered 'results/study1_tmp/*.filters.parquet' \
-  --out results/study1_rerun
-```
-
-## Custom Mask Selection
-
-Run only selected masks by name:
-
-```bash
-genemasker \
-  --annot data/vep.annot.tsv.bgz \
-  --stat data/variant_stats.tsv \
-  --stat-id-col variant_id \
-  --stat-maf-col maf \
-  --run-masks new_damaging_og25,x37348876_m8 \
-  --out results/study1_subset
-```
-
-Or from a file (`one mask name per line`):
-
-```bash
-genemasker \
-  --annot data/vep.annot.tsv.bgz \
-  --stat data/variant_stats.tsv \
-  --stat-id-col variant_id \
-  --stat-maf-col maf \
-  --run-masks-file config/masks.txt \
-  --out results/study1_subset
-```
-
-## Chromosome Recoding Example
-
-```bash
-genemasker \
-  --annot data/vep.annot.tsv.bgz \
-  --stat data/variant_stats.tsv \
-  --stat-id-col variant_id \
-  --stat-maf-col maf \
-  --recode-chrs '{"^X$":"23","^Y$":"24","^MT$":"26"}' \
-  --out results/study1_recode
-```
-
-## Transcripts and Conserved Domains
-
-Use all transcript-level annotations and restrict to conserved domains:
-
-```bash
-genemasker \
-  --annot data/vep.annot.tsv.bgz \
-  --stat data/variant_stats.tsv \
-  --stat-id-col variant_id \
-  --stat-maf-col maf \
-  --include-transcripts \
-  --conserved-domains-only \
-  --out results/study1_tx_domains
-```
-
-## Chunked Execution Example
-
-```bash
-genemasker \
-  --annot data/vep.annot.tsv.bgz \
-  --stat data/variant_stats.tsv \
-  --stat-id-col variant_id \
-  --stat-maf-col maf \
-  --chunk-size 200000 \
-  --chunk 3 \
-  --out results/study1
-```
-
-## Intermediate Artifact Reuse Example
-
-```bash
-genemasker \
-  --annot data/vep.annot.tsv.bgz \
-  --impute-pipeline results/study1.impute_pipeline.pkl \
-  --pca-pipeline results/study1.pca_pipeline.pkl \
-  --ica-pipeline results/study1.ica_pipeline.pkl \
-  --rankscore-miss results/study1.rankscore_miss.tsv \
-  --rankscore-maf-corr results/study1.rankscore_maf_corr.tsv \
-  --pc-maf-corr results/study1.pc_maf_corr.tsv \
-  --ic-maf-corr results/study1.ic_maf_corr.tsv \
-  --out results/study1_reuse
-```
-
-## Built-in Masks
-
-See full list in `docs/masks.md`.
-
-## Full CLI
-
-See `docs/cli-reference.md` for every option and examples.
+Use `--save-all` when the run must be reused. It preserves intermediate parquet
+files and writes the fitted imputation, PCA, and ICA pipelines; without it, the
+pipeline removes several prior-stage parquet files while advancing.
