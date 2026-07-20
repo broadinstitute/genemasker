@@ -2,9 +2,9 @@
 
 The built-in baseline masks are curated into three selectable sets:
 
-- `all` (default): all 18 baseline masks.
-- `low-frequency`: the nine masks in the **Baseline low-frequency** strategy.
-- `rare`: the nine masks in the **Baseline rare** strategy.
+- `all` (default): all 16 baseline masks (and two pLoF masks for interpretability).
+- `low-frequency`: the 8 masks in the **Baseline low-frequency** strategy (and low-frequency pLoF for interpretability).
+- `rare`: the 8 masks in the **Baseline rare** strategy (and rare pLoF for interpretability).
 
 Select a set with `--mask-set`. `--mask-set` cannot be combined with
 `--run-masks` or `--run-masks-file`; use an explicit list when selecting a
