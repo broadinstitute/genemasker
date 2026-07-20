@@ -5,9 +5,9 @@ This application produces masked group/gene variant inclusion files for rare var
 
 |DOI|
 
-.. |DOI| image:: https://zenodo.org/badge/DOI/10.5281/zenodo.21456131.svg
+.. |DOI| image:: https://img.shields.io/badge/DOI-10.5281%2Fzenodo.21456131-blue.svg
    :target: https://doi.org/10.5281/zenodo.21456131
-   :alt: DOI
+   :alt: DOI: 10.5281/zenodo.21456131
 
 Installation
 ************
