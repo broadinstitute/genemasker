@@ -33,6 +33,7 @@ parser.add_argument('--user-defined-filters', help='user defined filters')
 parser.add_argument('--generate-from-scored', help='a glob representing the scored.parquet files from a previous run')
 parser.add_argument('--generate-from-filtered', help='a glob representing the filters.parquet files from a previous run')
 parser.add_argument('--chunk', type=int, default=None, help='chunk number to run... causes to skip group file generation')
+parser.add_argument('--mask-set', choices=['all', 'low-frequency', 'rare'], help='curated baseline mask set; defaults to all when no explicit mask list is supplied')
 parser.add_argument('--run-masks-file', help='file containing list of masks to run by filter function name')
 parser.add_argument('--run-masks', help='comma separated list of masks to run by filter function name')
 parser.add_argument('--skip-calc-perc-damaging', action='store_true', help='skip calculating percent damaging (eg. if updating masks)')
@@ -67,6 +68,9 @@ if not args.generate_from_scored and not args.generate_from_filtered:
 
 if args.run_masks_file and args.run_masks:
 	parser.error(f"You must provide either --run-masks-file or --run-masks, but not both")
+
+if args.mask_set and (args.run_masks_file or args.run_masks):
+	parser.error("You must provide either --mask-set or an explicit mask list, but not both")
 
 if args.chunk is not None:
 	logger, logger_handler = communicate.setup_logger(f"{args.out}.chunk{str(args.chunk)}.genemasker.log")

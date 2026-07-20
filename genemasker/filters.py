@@ -110,36 +110,61 @@ def IMPACT_HIGH(row):
 def IMPACT_MODERATE(row):
 	return(any(x in row['IMPACT'] for x in ['MODERATE']))
 
-# masks
+# Curated baseline masks. Use ``mask`` to register additional masks from a
+# ``--user-defined-filters`` module.
 MASKS = []
+
+LOW_FREQUENCY_MASKS = (
+	"x24507775_m6_0_01",
+	"x29177435_m1",
+	"x29378355_m1_0_01",
+	"x32141622_m7_0_01",
+	"x32853339_m1",
+	"x36327219_m3",
+	"new_damaging_og25_0_01",
+	"new_damaging_og50_0_01",
+	"LoF_HC_0_01",
+)
+
+RARE_MASKS = (
+	"x30269813_m4",
+	"x31118516_m5_0_001",
+	"x31383942_m10",
+	"x31383942_m4",
+	"x34183866_m1",
+	"x34216101_m3_0_001",
+	"x36411364_m4_0_001",
+	"x37348876_m8",
+	"LoF_HC_0_001",
+)
+
+MASK_SETS = {
+	"all": LOW_FREQUENCY_MASKS + RARE_MASKS,
+	"low-frequency": LOW_FREQUENCY_MASKS,
+	"rare": RARE_MASKS,
+}
 
 def mask(func):
 	MASKS.append(func)
 	return func
-	
-@mask
-def new_damaging_ic25(df):
-	return(df.apply(lambda x: LoF_HC(x) or (missense(x) and combo_ic25(x)), axis=1))
 
-@mask
-def new_damaging_og25(df):
-	return(df.apply(lambda x: LoF_HC(x) or (missense(x) and combo_og25(x)), axis=1))
+def resolve_masks(mask_names):
+	"""Return registered mask functions in the requested order."""
+	if not mask_names:
+		return list(MASKS)
+	by_name = {func.__name__: func for func in MASKS}
+	unknown = [name for name in mask_names if name not in by_name]
+	if unknown:
+		raise ValueError(f"Unknown mask name(s): {', '.join(unknown)}")
+	return [by_name[name] for name in mask_names]
 
 @mask
 def new_damaging_og25_0_01(df):
 	return(df.apply(lambda x: (LoF_HC(x) or (missense(x) and combo_og25(x))) and maf1(x), axis=1))
 
 @mask
-def new_damaging_og50(df):
-	return(df.apply(lambda x: LoF_HC(x) or (missense(x) and combo_og50(x)), axis=1))
-
-@mask
 def new_damaging_og50_0_01(df):
 	return(df.apply(lambda x: (LoF_HC(x) or (missense(x) and combo_og50(x))) and maf1(x), axis=1))
-
-@mask
-def x23633568_m1(df):
-	return(df.apply(lambda x: stop_gained(x) or frameshift(x) or (missense(x) and (SIFT_pred_D(x) or Polyphen2_HVAR_pred_D_or_P(x) or Polyphen2_HDIV_pred_D_or_P(x))), axis=1))
 
 @mask
 def x24507775_m6_0_01(df):
@@ -158,10 +183,6 @@ def x30269813_m4(df):
 	return(df.apply(lambda x: (stop_gained(x) | essential_splice(x) | frameshift(x) | indels(x) | (missense(x) & (Polyphen2_HDIV_pred_D(x) | Polyphen2_HVAR_pred_D(x)))) & maf0_1(x), axis=1))
 
 @mask
-def x30828346_m1(df):
-	return(df.apply(lambda x: (missense(x) | synonymous(x) | stop_gained(x) | stop_lost(x)) & maf10(x), axis=1))
-
-@mask
 def x31118516_m5_0_001(df):
 	return(df.apply(lambda x: (LoF_HC(x) | (Polyphen2_HDIV_pred_D(x) & Polyphen2_HVAR_pred_D(x) & SIFT_pred_D(x) & LRT_pred_D(x) & MutationTaster_pred_D_or_A(x))) & maf0_1(x), axis=1))
 
@@ -172,14 +193,6 @@ def x31383942_m10(df):
 @mask
 def x31383942_m4(df):
 	return(df.apply(lambda x: (stop_gained(x) | stop_lost(x) | frameshift(x) | essential_splice(x) | (missense(x) & REVEL_score_0_55(x))) & maf0_1(x), axis=1))
-
-@mask
-def x32141622_m4(df):
-	return(df.apply(lambda x: indels(x), axis=1))
-
-@mask
-def x32141622_m7(df):
-	return(df.apply(lambda x: stop_gained(x) | essential_splice(x) | frameshift(x) | splice_region_variant(x), axis=1))
 
 @mask
 def x32141622_m7_0_01(df):
@@ -208,3 +221,11 @@ def x36411364_m4_0_001(df):
 @mask
 def x37348876_m8(df):
 	return(df.apply(lambda x: (CADD_phred_20(x) | LoF_HC(x)) & maf0_1(x), axis=1))
+
+@mask
+def LoF_HC_0_01(df):
+	return(df.apply(lambda x: LoF_HC(x) and maf1(x), axis=1))
+
+@mask
+def LoF_HC_0_001(df):
+	return(df.apply(lambda x: LoF_HC(x) and maf0_1(x), axis=1))

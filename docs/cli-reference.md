@@ -318,19 +318,34 @@ genemasker --annot data/vep.annot.tsv.bgz --stat data/stat.tsv --stat-id-col ID 
 
 ## Mask Selection
 
-### `--run-masks`
+### `--mask-set`
 
-Comma-separated mask function names.
+Select a curated baseline mask set: `all` (the default), `low-frequency`, or
+`rare`. This option cannot be combined with `--run-masks` or
+`--run-masks-file`.
 
 Example:
 
 ```bash
-genemasker --annot data/vep.annot.tsv.bgz --stat data/stat.tsv --stat-id-col ID --stat-maf-col MAF --run-masks new_damaging_ic25,x31383942_m4 --out results/run
+genemasker --annot data/vep.annot.tsv.bgz --stat data/stat.tsv --stat-id-col ID --stat-maf-col MAF --mask-set low-frequency --out results/run
+```
+
+### `--run-masks`
+
+Comma-separated built-in or user-defined mask function names. Every requested
+name is validated; unknown names stop the run with an error. This option cannot
+be combined with `--mask-set` or `--run-masks-file`.
+
+Example:
+
+```bash
+genemasker --annot data/vep.annot.tsv.bgz --stat data/stat.tsv --stat-id-col ID --stat-maf-col MAF --run-masks LoF_HC_0_001,x31383942_m4 --out results/run
 ```
 
 ### `--run-masks-file`
 
-File of mask names (one per line).
+File of built-in or user-defined mask names (one per line). Every requested name
+is validated. This option cannot be combined with `--mask-set` or `--run-masks`.
 
 Example:
 

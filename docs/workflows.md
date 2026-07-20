@@ -30,8 +30,9 @@ genemasker \
   --out results/study1
 ```
 
-With no `--run-masks` or `--run-masks-file`, every built-in mask is calculated.
-To calculate only named masks, give a comma-separated list:
+With no `--mask-set`, `--run-masks`, or `--run-masks-file`, all curated baseline
+masks are calculated. Use `--mask-set low-frequency` or `--mask-set rare` to
+run a baseline strategy, or give a comma-separated list for an explicit subset:
 
 ```bash
 genemasker \
@@ -39,7 +40,7 @@ genemasker \
   --stat data/study1.variant_stats.tsv \
   --stat-id-col variant_id \
   --stat-maf-col maf \
-  --run-masks new_damaging_og25,x37348876_m8 \
+  --run-masks new_damaging_og25_0_01,x37348876_m8 \
   --save-all \
   --out results/study1_selected
 ```
@@ -100,7 +101,7 @@ changing mask logic without recomputing scores.
 ```bash
 genemasker \
   --generate-from-scored 'results/study1_tmp/*.scored.parquet' \
-  --run-masks new_damaging_og25,x37348876_m8 \
+  --run-masks new_damaging_og25_0_01,x37348876_m8 \
   --out results/study1_remasked
 ```
 
@@ -126,7 +127,7 @@ functions. Use it to recreate outputs from an existing filtered checkpoint.
 ```bash
 genemasker \
   --generate-from-filtered 'results/study1_tmp/*.filters.parquet' \
-  --run-masks new_damaging_og25,x37348876_m8 \
+  --run-masks new_damaging_og25_0_01,x37348876_m8 \
   --out results/study1_regenerated
 ```
 
@@ -154,7 +155,7 @@ For example, remask checkpoint number 3:
 genemasker \
   --generate-from-scored 'results/study1_tmp/study1.vep.tsv.bgz-*.scored.parquet' \
   --chunk 3 \
-  --run-masks new_damaging_og25 \
+  --run-masks new_damaging_og25_0_01 \
   --out results/study1_chunked
 ```
 
@@ -164,7 +165,7 @@ without `--chunk`:
 ```bash
 genemasker \
   --generate-from-filtered 'results/study1_chunked_tmp/*.filters.parquet' \
-  --run-masks new_damaging_og25 \
+  --run-masks new_damaging_og25_0_01 \
   --out results/study1_chunked_final
 ```
 
@@ -182,7 +183,7 @@ genemasker \
   --out results/study1_recoded
 ```
 
-Use exactly one of `--run-masks` and `--run-masks-file`. A masks file contains
-one function name per line. Names not registered by a built-in or loaded custom
-filter are not selected, so check the run log and expected output files when
-using a new name.
+Use at most one of `--mask-set`, `--run-masks`, and `--run-masks-file`. A masks
+file contains one function name per line. When none is supplied, the `all`
+baseline set is used. Every explicitly requested name must be registered by a
+built-in or loaded custom filter; unknown names stop the run with an error.

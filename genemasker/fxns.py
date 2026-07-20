@@ -364,10 +364,7 @@ def calculate_mask_filters(chunk_paths, run_masks = [], save_all = False):
 		i = i + 1
 		o = p.replace(".parquet",".filters.parquet")
 		df = pd.read_parquet(p)
-		if len(run_masks) == 0:
-			run_func = [func for func in filters.MASKS]
-		else:
-			run_func = [func for func in filters.MASKS if func.__name__ in run_masks]
+		run_func = filters.resolve_masks(run_masks)
 		for func in run_func:
 			df[func.__name__] = func(df)
 		df.to_parquet(o, index=False)
@@ -379,10 +376,7 @@ def calculate_mask_filters(chunk_paths, run_masks = [], save_all = False):
 
 @resource_tracker(logger)
 def generate_regenie_groupfiles(ddf, run_masks, var_id, var_id_orig, uid, recode_chrs, out):
-	if len(run_masks) == 0:
-		masks = [func.__name__ for func in filters.MASKS]
-	else:
-		masks = [func.__name__ for func in filters.MASKS if func.__name__ in run_masks]
+	masks = [func.__name__ for func in filters.resolve_masks(run_masks)]
 	if uid != var_id:
 		df = ddf[[var_id, var_id_orig, uid, 'Gene', 'Feature'] + masks].compute()
 	else:
