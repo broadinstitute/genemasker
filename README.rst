@@ -9,6 +9,14 @@ This application produces masked group/gene variant inclusion files for rare var
    :target: https://doi.org/10.5281/zenodo.21456131
    :alt: DOI: 10.5281/zenodo.21456131
 
+Citation
+********
+
+`Nguyen, T., Koesterer, R., Haydarlou, P. et al. Empirically determined
+baseline masking strategies and other considerations for gene-level burden
+tests. Nat Genet 58, 1226–1236 (2026). https://doi.org/10.1038/s41588-026-02597-9
+<https://www.nature.com/articles/s41588-026-02597-9>`_
+
 Installation
 ************
 
