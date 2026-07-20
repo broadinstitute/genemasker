@@ -190,7 +190,8 @@ pipeline files and intermediate checkpoint parquet files.
 Mask Selection and Output Controls
 **********************************
 
-Run only selected masks by name:
+By default, all 18 curated baseline masks are run. Select only the
+low-frequency or rare baseline strategy with ``--mask-set``:
 
 .. code-block:: bash
 
@@ -199,12 +200,24 @@ Run only selected masks by name:
      --stat data/variant_stats.tsv \
      --stat-id-col variant_id \
      --stat-maf-col maf \
-     --run-masks new_damaging_og25,x37348876_m8 \
+     --mask-set rare \
+     --out results/study1_rare
+
+Run an explicit subset, including custom masks, by name:
+
+.. code-block:: bash
+
+   genemasker \
+     --annot data/vep.annot.tsv.bgz \
+     --stat data/variant_stats.tsv \
+     --stat-id-col variant_id \
+     --stat-maf-col maf \
+     --run-masks new_damaging_og25_0_01,x37348876_m8 \
      --out results/study1_subset
 
 Or provide one mask name per line with ``--run-masks-file config/masks.txt``.
-The two selection options are mutually exclusive. When neither option is used,
-all registered masks are calculated.
+``--mask-set``, ``--run-masks``, and ``--run-masks-file`` are mutually
+exclusive; when none is used, all curated baseline masks are calculated.
 
 Use ``--recode-chrs`` to apply regex-based chromosome recoding in final output:
 

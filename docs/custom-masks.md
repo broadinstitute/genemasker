@@ -106,7 +106,7 @@ genemasker \
   --stat-maf-col maf \
   --user-definitions custom/study_definitions.py \
   --user-defined-filters custom/study_filters.py \
-  --run-masks study_damage_080,new_damaging_og25 \
+  --run-masks study_damage_080,new_damaging_og25_0_01 \
   --out results/study1_custom_and_builtin
 ```
 

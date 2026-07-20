@@ -55,9 +55,11 @@ def main(args=None):
 	run_masks = []
 	if args.run_masks_file:
 		with open(args.run_masks_file, 'r') as file:
-			run_masks = [item.strip() for item in file.readlines()]
+			run_masks = [item.strip() for item in file.readlines() if item.strip()]
 	elif args.run_masks:
 		run_masks = args.run_masks.split(',')
+	else:
+		run_masks = fxns.filters.MASK_SETS[args.mask_set or 'all']
 
 	with ProgressBar():
 
